@@ -472,8 +472,11 @@ def call_anthropic(api_key: str, model: str, prompt: str, temperature: float) ->
     msg = client.messages.create(
         model=model,
         max_tokens=8192,
-        temperature=temperature,
-        messages=[{"role": "user", "content": prompt}]
+        messages=[{"role": "user", "content": prompt}],
+        # SDK anthropic >= 1.0 removeu o argumento `temperature` do create().
+        # Via extra_body o valor vai direto no corpo da requisição HTTP e
+        # funciona tanto no SDK 0.x quanto no 1.x.
+        extra_body={"temperature": temperature},
     )
     raw = msg.content[0].text
     return _parse_json_robusto(raw)
