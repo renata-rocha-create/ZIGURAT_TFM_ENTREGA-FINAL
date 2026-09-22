@@ -1,0 +1,294 @@
+{
+  "schema_version": "1.1",
+  "norma": "NBR 9050:2020",
+  "ifc_schema_target": [
+    "IFC2X3",
+    "IFC4"
+  ],
+  "fonte_planilha_original": "Normas_Acessibilidade_NBR9050_TFM.xlsx — aba 'Itens Selecionados a Serem Verificados'",
+  "status_validacao_prototipo": [
+    "Completo",
+    "Parcial",
+    "Incompleto"
+  ],
+  "status_validacao_prototipo_descricao": {
+    "Completo": "Todos os itens verificáveis do modelo retornaram Conforme ou Não Conforme com dados suficientes.",
+    "Parcial": "Ao menos um item retornou Indeterminado por falta de dados no modelo, mas a maioria foi avaliada.",
+    "Incompleto": "Dados insuficientes (ex: IfcSpace ausente) impedem avaliação da maior parte dos itens selecionados."
+  },
+  "itens": [
+    {
+      "item_nbr": "6.6",
+      "subcategoria": "Rampas",
+      "item_verificavel": "Desnível de 1,50m = 5%; 1m = 6,25%; 0,80m = 8,33%",
+      "classificacao": "Geométrica",
+      "entidades": {
+        "primaria": "IfcRamp, IfcRampFlight",
+        "fallback": "IfcSlab"
+      },
+      "estrategias": {
+        "primaria": "Extrair OverallRise e OverallRun de IfcRampFlight; calcular inclinação por faixa de desnível e comparar com limite da NBR",
+        "fallback": "Calcular inclinação da geometria (OverallRise/Run). Se inclinação > 2% e < 30% → tratar como rampa"
+      },
+      "prompt_llm": "Você é um verificador de conformidade NBR 9050:2020 (item 6.6). Nos elementos fornecidos, localize IfcRamp e IfcRampFlight. Para cada um, extraia OverallRise e OverallRun e calcule inclinação = OverallRise / OverallRun × 100. Compare: desnível ≤ 0,80m → máx 8,33%; ≤ 1,00m → máx 6,25%; ≤ 1,50m → máx 5,00%. FALLBACK: se não houver IfcRamp/IfcRampFlight, verifique IfcSlab com nome contendo 'rampa' ou 'ramp' nos elementos fornecidos. Se nenhum elemento de rampa existir no modelo, retorne status 'Indeterminado' explicando a ausência. CRITÉRIO PARA 'Parcial': se houver MAIS DE UM elemento avaliado neste item, conte quantos atendem ao critério (X) do total (Y). Se X=Y (100%) → 'Conforme'. Se X=0 (0%) → 'Não Conforme'. Se 0<X<Y → 'Parcial', e escreva explicitamente 'X de Y elementos conformes' em valor_encontrado, citando os GlobalIds dos elementos NÃO conformes na recomendação. Não arredonde X/Y parcial para 'Conforme' nem para 'Não Conforme'.",
+      "status_validacao_possiveis": [
+        "Conforme",
+        "Não Conforme",
+        "Parcial",
+        "Indeterminado",
+        "N/A"
+      ],
+      "requer_nivel_confianca": false
+    },
+    {
+      "item_nbr": "6.11.1",
+      "subcategoria": "Corredores",
+      "item_verificavel": "Largura mín. 0,90m (≤4m); 1,20m (≤10m); 1,50m (>10m)",
+      "classificacao": "Geométrica",
+      "entidades": {
+        "primaria": "IfcSpace",
+        "fallback": "IfcWall"
+      },
+      "estrategias": {
+        "primaria": "Identificar IfcSpace de circulação; calcular comprimento e largura; aplicar regra condicional por faixa",
+        "fallback": "Se IfcSpace não disponível, inferir largura a partir de paredes opostas (IfcWall)"
+      },
+      "prompt_llm": "Você é um verificador de conformidade NBR 9050:2020 (item 6.11.1). Nos elementos fornecidos, localize IfcSpace com Name/LongName contendo 'corredor', 'circulação', 'hall', 'acesso' ou 'passagem'. Para cada um, estime comprimento e largura. Aplique: comprimento ≤ 4m → largura mín 0,90m; ≤ 10m → mín 1,20m; > 10m → mín 1,50m. FALLBACK: se IfcSpace ausente nos dados fornecidos, registre 'Indeterminado' por ausência de IfcSpace no modelo e recomende modelar espaços de circulação.",
+      "status_validacao_possiveis": [
+        "Conforme",
+        "Não Conforme",
+        "Indeterminado",
+        "N/A"
+      ],
+      "requer_nivel_confianca": false
+    },
+    {
+      "item_nbr": "6.11.2",
+      "subcategoria": "Portas",
+      "item_verificavel": "Vão livre mín. 0,80m (largura) e 2,10m (altura)",
+      "classificacao": "Geométrica",
+      "entidades": {
+        "primaria": "IfcDoor",
+        "fallback": "IfcOpeningElement"
+      },
+      "estrategias": {
+        "primaria": "Extrair OverallWidth e OverallHeight de IfcDoor; aplicar >= 0,80m e >= 2,10m",
+        "fallback": "Se OverallWidth/Height ausentes, extrair dimensões do IfcOpeningElement associado"
+      },
+      "prompt_llm": "Você é um verificador de conformidade NBR 9050:2020 (item 6.11.2). Para cada IfcDoor nos elementos fornecidos, extraia OverallWidth e OverallHeight. Verifique: largura ≥ 0,80m E altura ≥ 2,10m → Conforme; qualquer dimensão menor → Não Conforme; sem dimensões → Indeterminado. Inclua o GlobalId de cada porta verificada. CRITÉRIO PARA 'Parcial': se houver MAIS DE UM elemento avaliado neste item, conte quantos atendem ao critério (X) do total (Y). Se X=Y (100%) → 'Conforme'. Se X=0 (0%) → 'Não Conforme'. Se 0<X<Y → 'Parcial', e escreva explicitamente 'X de Y elementos conformes' em valor_encontrado, citando os GlobalIds dos elementos NÃO conformes na recomendação. Não arredonde X/Y parcial para 'Conforme' nem para 'Não Conforme'.",
+      "status_validacao_possiveis": [
+        "Conforme",
+        "Não Conforme",
+        "Parcial",
+        "Indeterminado"
+      ],
+      "requer_nivel_confianca": false
+    },
+    {
+      "item_nbr": "6.11.3",
+      "subcategoria": "Janelas",
+      "item_verificavel": "Peitoril mínimo de 1,20m (exceto áreas com necessidade de privacidade)",
+      "classificacao": "Condicional",
+      "entidades": {
+        "primaria": "IfcWindow",
+        "fallback": "IfcOpeningElement"
+      },
+      "estrategias": {
+        "primaria": "Extrair Sill Height via Pset_WindowCommon; verificar IfcSpace pai para checar privacidade",
+        "fallback": "Calcular z mínimo da abertura em relação ao piso do IfcSpace pai"
+      },
+      "prompt_llm": "Você é um verificador de conformidade NBR 9050:2020 (item 6.11.3). Para cada IfcWindow nos elementos fornecidos, extraia SillHeight ou altura do peitoril via Psets. Verifique: se o espaço for banheiro/vestiário/dormitório → 'N/A'. Caso contrário, SillHeight ≥ 1,20m → Conforme; < 1,20m → Não Conforme; sem dados → Indeterminado. CRITÉRIO PARA 'Parcial': se houver MAIS DE UM elemento avaliado neste item, conte quantos atendem ao critério (X) do total (Y). Se X=Y (100%) → 'Conforme'. Se X=0 (0%) → 'Não Conforme'. Se 0<X<Y → 'Parcial', e escreva explicitamente 'X de Y elementos conformes' em valor_encontrado, citando os GlobalIds dos elementos NÃO conformes na recomendação. Não arredonde X/Y parcial para 'Conforme' nem para 'Não Conforme'.",
+      "status_validacao_possiveis": [
+        "Conforme",
+        "Não Conforme",
+        "Parcial",
+        "Indeterminado",
+        "N/A"
+      ],
+      "requer_nivel_confianca": true
+    },
+    {
+      "item_nbr": "5.4.3",
+      "subcategoria": "Corrimão",
+      "item_verificavel": "Corrimão em ambos os lados de rampas e escadas; alturas 0,70m e 0,92m — obrigatório se desnível > 0,19m",
+      "classificacao": "Condicional",
+      "entidades": {
+        "primaria": "IfcRailing",
+        "fallback": "IfcBuildingElementProxy com nome 'corrimão' ou 'handrail'"
+      },
+      "estrategias": {
+        "primaria": "Identificar IfcRailing associado a IfcRamp ou IfcStair; verificar ambos os lados; extrair altura",
+        "fallback": "Buscar IfcBuildingElementProxy com Name/ObjectType contendo 'corrimão' ou 'handrail'"
+      },
+      "prompt_llm": "Você é um verificador de conformidade NBR 9050:2020 (item 5.4.3). Nos elementos fornecidos, localize IfcStair e IfcRamp. Para cada um, calcule o desnível total (NumberOfRisers × RiserHeight ou OverallRise). Se desnível ≤ 0,19m → 'N/A'. Se > 0,19m, verifique: (a) IfcRailing presente em ambos os lados; (b) altura 0,70m e 0,92m. FALLBACK: busque IfcBuildingElementProxy com 'corrimão' ou 'handrail' no Name/ObjectType. Sem nenhum elemento de corrimão → Indeterminado com recomendação de verificação in loco. CRITÉRIO PARA 'Parcial': se houver MAIS DE UM elemento avaliado neste item, conte quantos atendem ao critério (X) do total (Y). Se X=Y (100%) → 'Conforme'. Se X=0 (0%) → 'Não Conforme'. Se 0<X<Y → 'Parcial', e escreva explicitamente 'X de Y elementos conformes' em valor_encontrado, citando os GlobalIds dos elementos NÃO conformes na recomendação. Não arredonde X/Y parcial para 'Conforme' nem para 'Não Conforme'.",
+      "status_validacao_possiveis": [
+        "Conforme",
+        "Não Conforme",
+        "Parcial",
+        "Indeterminado",
+        "N/A"
+      ],
+      "requer_nivel_confianca": true
+    },
+    {
+      "item_nbr": "6.3.4",
+      "subcategoria": "Piso / Desníveis",
+      "item_verificavel": "Desnível entre 5mm e 20mm deve ter chanfro com inclinação máxima 1:2",
+      "classificacao": "Condicional",
+      "entidades": {
+        "primaria": "IfcSlab",
+        "fallback": "IfcBuildingElementProxy com nome 'chanfro' ou 'transition'"
+      },
+      "estrategias": {
+        "primaria": "Detectar adjacência entre IfcSlab com diferença de z entre 5mm e 20mm; verificar chanfro",
+        "fallback": "Buscar IfcBuildingElementProxy com 'chanfro', 'rampa de acesso' ou 'transition' no Name"
+      },
+      "prompt_llm": "Você é um verificador de conformidade NBR 9050:2020 (item 6.3.4). Nos IfcSlab fornecidos, analise se há indicação de desníveis entre pisos. Para diferença < 5mm → 'N/A'; entre 5mm e 20mm → verifique chanfro (inclinação ≤ 1:2 = 50%); > 20mm → 'Fora do escopo (degrau)'. FALLBACK: busque IfcBuildingElementProxy com 'chanfro' ou 'rampa de acesso'. Se não houver dados suficientes → Indeterminado.",
+      "status_validacao_possiveis": [
+        "Conforme",
+        "Não Conforme",
+        "Indeterminado",
+        "N/A",
+        "Fora do escopo"
+      ],
+      "requer_nivel_confianca": true
+    },
+    {
+      "item_nbr": "7.5",
+      "subcategoria": "Circulação sanitários",
+      "item_verificavel": "Giro 360° da cadeira de rodas — diâmetro de 1,50m",
+      "classificacao": "Relacional",
+      "entidades": {
+        "primaria": "IfcSpace",
+        "fallback": "IfcSlab"
+      },
+      "estrategias": {
+        "primaria": "Extrair polígono do piso de IfcSpace de sanitário; verificar se círculo r=0,75m cabe no polígono",
+        "fallback": "Se IfcSpace ausente, reconstruir polígono via IfcSlab do ambiente"
+      },
+      "prompt_llm": "Você é um verificador de conformidade NBR 9050:2020 (item 7.5). Nos elementos fornecidos, localize IfcSpace identificado como sanitário acessível (banheiro, WC, sanitário). Estime se a área comporta um círculo de diâmetro 1,50m: área mínima aproximada ≥ 1,77m². FALLBACK: se IfcSpace ausente → Indeterminado com recomendação de modelar IfcSpace para verificação espacial.",
+      "status_validacao_possiveis": [
+        "Conforme",
+        "Não Conforme",
+        "Indeterminado"
+      ],
+      "requer_nivel_confianca": false
+    },
+    {
+      "item_nbr": "7.7.2.1",
+      "subcategoria": "Bacia sanitária",
+      "item_verificavel": "Altura entre 0,43m e 0,45m (sem assento)",
+      "classificacao": "Relacional",
+      "entidades": {
+        "primaria": "IfcSanitaryTerminal",
+        "fallback": "IfcFlowTerminal"
+      },
+      "estrategias": {
+        "primaria": "Extrair MountingHeight via Pset_SanitaryTerminalTypeCommon; verificar 0,43m ≤ altura ≤ 0,45m",
+        "fallback": "Calcular z máximo da geometria como proxy da borda superior"
+      },
+      "prompt_llm": "Você é um verificador de conformidade NBR 9050:2020 (item 7.7.2.1). Para cada IfcSanitaryTerminal ou IfcFlowTerminal identificado como bacia sanitária nos dados fornecidos (categoria_sanitario='bacia_sanitaria'), extraia MountingHeight_m dos Psets. Se ausente, use altura_estimada_m ou Z_placement_m — esses já estão em coordenadas RELATIVAS ao pavimento (valores plausíveis: 0,01m a 2,50m). Verifique: 0,43m ≤ altura ≤ 0,45m → Conforme; fora do intervalo → Não Conforme; sem nenhuma altura disponível → Indeterminado. Inclua o GlobalId de cada elemento. CRITÉRIO PARA 'Parcial': se houver MAIS DE UM elemento avaliado neste item, conte quantos atendem ao critério (X) do total (Y). Se X=Y (100%) → 'Conforme'. Se X=0 (0%) → 'Não Conforme'. Se 0<X<Y → 'Parcial', e escreva explicitamente 'X de Y elementos conformes' em valor_encontrado, citando os GlobalIds dos elementos NÃO conformes na recomendação. Não arredonde X/Y parcial para 'Conforme' nem para 'Não Conforme'.",
+      "status_validacao_possiveis": [
+        "Conforme",
+        "Não Conforme",
+        "Parcial",
+        "Indeterminado"
+      ],
+      "requer_nivel_confianca": false
+    },
+    {
+      "item_nbr": "7.7.1",
+      "subcategoria": "Vaso sanitário",
+      "item_verificavel": "Área de transferência lateral: espaço livre de 0,80m × 1,20m",
+      "classificacao": "Relacional",
+      "entidades": {
+        "primaria": "IfcSanitaryTerminal, IfcSpace",
+        "fallback": "IfcBuildingElementProxy com 'vaso', 'bacia' ou 'WC'"
+      },
+      "estrategias": {
+        "primaria": "Identificar vaso dentro do IfcSpace; verificar espaço livre ≥ 0,80m × 1,20m ao lado",
+        "fallback": "Reconstruir polígono via IfcWall; buscar proxy com 'vaso', 'bacia' ou 'WC'"
+      },
+      "prompt_llm": "Você é um verificador de conformidade NBR 9050:2020 (item 7.7.1). Nos dados fornecidos, localize os elementos com categoria_sanitario='bacia_sanitaria'. Verifique se há IfcSpace associado que permita área de transferência lateral ≥ 0,80m × 1,20m. Use os dados de largura_estimada_m e area_geometrica_m2 dos IfcSpace sanitários para estimar. Se área do espaço > 2,5m² → provavelmente Conforme; < 1,5m² → provavelmente Não Conforme; sem dados espaciais → Indeterminado.",
+      "status_validacao_possiveis": [
+        "Conforme",
+        "Não Conforme",
+        "Indeterminado"
+      ],
+      "requer_nivel_confianca": true
+    },
+    {
+      "item_nbr": "4.6.6",
+      "subcategoria": "Maçaneta",
+      "item_verificavel": "Maçaneta tipo alavanca (não esférica) em portas de uso comum e acessível",
+      "classificacao": "Qualitativa",
+      "entidades": {
+        "primaria": "IfcDoor",
+        "fallback": "IfcDoorStyle, IfcDoorType"
+      },
+      "estrategias": {
+        "primaria": "LLM analisa Name, ObjectType, Description para classificar tipo de maçaneta",
+        "fallback": "Consultar IfcDoorStyle ou IfcDoorType associado"
+      },
+      "prompt_llm": "Você é um verificador de conformidade NBR 9050:2020 (item 4.6.6). Para cada IfcDoor nos elementos fornecidos, analise Name, ObjectType, Description e Psets. Classifique: termos como 'alavanca', 'lever', 'handle' → Conforme; 'esférica', 'knob', 'giratória', 'round' → Não Conforme; sem informação → Indeterminado. Inclua o GlobalId de cada porta. CRITÉRIO PARA 'Parcial': se houver MAIS DE UM elemento avaliado neste item, conte quantos atendem ao critério (X) do total (Y). Se X=Y (100%) → 'Conforme'. Se X=0 (0%) → 'Não Conforme'. Se 0<X<Y → 'Parcial', e escreva explicitamente 'X de Y elementos conformes' em valor_encontrado, citando os GlobalIds dos elementos NÃO conformes na recomendação. Não arredonde X/Y parcial para 'Conforme' nem para 'Não Conforme'.",
+      "status_validacao_possiveis": [
+        "Conforme",
+        "Não Conforme",
+        "Parcial",
+        "Indeterminado"
+      ],
+      "requer_nivel_confianca": true
+    },
+    {
+      "item_nbr": "7.6-7.8",
+      "subcategoria": "Barras de apoio",
+      "item_verificavel": "Barras de apoio instaladas corretamente (posição e altura ~0,75m)",
+      "classificacao": "Qualitativa",
+      "entidades": {
+        "primaria": "IfcFurnishingElement",
+        "fallback": "IfcBuildingElementProxy com 'barra', 'apoio' ou 'grab bar'"
+      },
+      "estrategias": {
+        "primaria": "LLM analisa Name, ObjectType, Description para identificar barras de apoio",
+        "fallback": "Buscar IfcBuildingElementProxy com 'barra', 'apoio', 'grab bar' ou 'handrail'"
+      },
+      "prompt_llm": "Você é um verificador de conformidade NBR 9050:2020 (itens 7.6–7.8). Nos elementos fornecidos, localize IfcFurnishingElement ou IfcBuildingElementProxy com 'barra', 'apoio', 'grab bar' no Name/Description. Verifique posição (lateral/frontal/fundo do vaso) e altura (~0,75m). FALLBACK: se nenhum elemento encontrado → Indeterminado com recomendação de verificar instalação in loco. CRITÉRIO PARA 'Parcial': se houver MAIS DE UM elemento avaliado neste item, conte quantos atendem ao critério (X) do total (Y). Se X=Y (100%) → 'Conforme'. Se X=0 (0%) → 'Não Conforme'. Se 0<X<Y → 'Parcial', e escreva explicitamente 'X de Y elementos conformes' em valor_encontrado, citando os GlobalIds dos elementos NÃO conformes na recomendação. Não arredonde X/Y parcial para 'Conforme' nem para 'Não Conforme'.",
+      "status_validacao_possiveis": [
+        "Conforme",
+        "Não Conforme",
+        "Parcial",
+        "Indeterminado"
+      ],
+      "requer_nivel_confianca": true
+    },
+    {
+      "item_nbr": "7.8",
+      "subcategoria": "Lavatório",
+      "item_verificavel": "Sem coluna ou suspenso (acesso frontal garantido)",
+      "classificacao": "Qualitativa",
+      "entidades": {
+        "primaria": "IfcSanitaryTerminal",
+        "fallback": "IfcFlowTerminal"
+      },
+      "estrategias": {
+        "primaria": "LLM classifica tipo via Name + ObjectType + Description",
+        "fallback": "Ambas as entidades são válidas para este item"
+      },
+      "prompt_llm": "Você é um verificador de conformidade NBR 9050:2020 (item 7.8). Nos dados fornecidos, localize elementos com categoria_sanitario='lavatorio'. Classifique pelo Name/ObjectType: 'suspenso', 'sem coluna', 'embutir', 'de embutir', 'semiencaixe', 'encaixe' → Conforme (instalação sem coluna, acesso frontal garantido); 'com coluna', 'pedestal', 'coluna suspensa' → Não Conforme; sem informação clara → Indeterminado. IMPORTANTE: 'cuba retang. embutir' e 'cuba-de-semiencaixe' são lavatórios SEM coluna → Conforme. Inclua o GlobalId. CRITÉRIO PARA 'Parcial': se houver MAIS DE UM elemento avaliado neste item, conte quantos atendem ao critério (X) do total (Y). Se X=Y (100%) → 'Conforme'. Se X=0 (0%) → 'Não Conforme'. Se 0<X<Y → 'Parcial', e escreva explicitamente 'X de Y elementos conformes' em valor_encontrado, citando os GlobalIds dos elementos NÃO conformes na recomendação. Não arredonde X/Y parcial para 'Conforme' nem para 'Não Conforme'.",
+      "status_validacao_possiveis": [
+        "Conforme",
+        "Não Conforme",
+        "Parcial",
+        "Indeterminado"
+      ],
+      "requer_nivel_confianca": true
+    }
+  ],
+  "status_geral_possiveis_descricao": {
+    "Conforme": "100% dos elementos avaliados atendem ao critério.",
+    "Não Conforme": "0% dos elementos avaliados atendem ao critério.",
+    "Parcial": "Entre 1% e 99% dos elementos avaliados atendem ao critério — só se aplica a itens com mais de um elemento avaliado (ver 'status_validacao_possiveis' de cada item).",
+    "Indeterminado": "Dados insuficientes no modelo para avaliar.",
+    "N/A": "Elemento não existe no modelo ou item não se aplica."
+  }
+}
