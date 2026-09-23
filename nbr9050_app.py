@@ -34,7 +34,7 @@ from regras import obter_regras_lista
 from llm_auditor import build_audit_prompt, call_anthropic, call_gemini
 from verificacoes import (classificar_status, calcular_resumo,
                           gerar_verificacoes, comparar_com_llm)
-from dashboard import render_aba_elementos
+from dashboard import render_aba_elementos, render_dashboard
 from relatorios import gerar_relatorio_html, gerar_excel
 
 aplicar_estilo()
@@ -172,8 +172,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_upload, tab_resultado, tab_elementos, tab_ajuda = st.tabs(
-    ["📁 Arquivos & Execução", "📊 Resultados", "🔎 Por Elemento", "❓ Ajuda"])
+tab_upload, tab_resultado, tab_dashboard, tab_elementos, tab_ajuda = st.tabs(
+    ["📁 Arquivos & Execução", "📊 Resultados", "📈 Dashboard", "🔎 Por Elemento", "❓ Ajuda"])
 
 # ─────────────────────────────────────────────
 with tab_upload:
@@ -555,6 +555,11 @@ with tab_resultado:
         # JSON expandable
         with st.expander("🔍 Ver JSON bruto da auditoria"):
             st.json(resultado)
+
+
+# ─────────────────────────────────────────────
+with tab_dashboard:
+    render_dashboard(st.session_state.verificacoes, st.session_state.resultado)
 
 
 # ─────────────────────────────────────────────
