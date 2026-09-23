@@ -15,7 +15,8 @@ def _pavimento(el):
     """
     try:
         from ifcopenshell.util.element import get_container, get_aggregate
-        c = get_container(el)
+        # IfcSpace não é "contido" (get_container), é "agregado" ao pavimento
+        c = get_container(el) or get_aggregate(el)
         passos = 0
         while c is not None and not c.is_a("IfcBuildingStorey") and passos < 6:
             c = get_container(c) or get_aggregate(c)
