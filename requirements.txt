@@ -1,9 +1,17 @@
-streamlit>=1.32.0
-anthropic>=0.25.0
-google-generativeai>=0.5.0
-openpyxl>=3.1.0
-pandas>=2.0.0
-python-docx>=1.1.0
-ifcopenshell
-shapely>=2.0.0
-numpy>=1.24.0
+# ── Interface ────────────────────────────────────────────────────────────────
+streamlit>=1.35.0          # app web (st.toggle, column_config, altair_chart theme=None)
+altair>=4.2.0,<6           # gráficos do Dashboard (já vem com o Streamlit; listado por clareza)
+plotly>=5.20.0             # visualizador 3D (aba "Modelo 3D")
+
+# ── BIM / geometria ──────────────────────────────────────────────────────────
+ifcopenshell               # leitura do IFC (IFC2X3 e IFC4) + geometria 3D
+shapely>=2.0.0             # teste de giro ⌀1,50 m e largura de corredores
+numpy>=1.24.0              # vértices e malhas 3D
+
+# ── Dados e relatórios ───────────────────────────────────────────────────────
+pandas>=2.0.0              # tabelas por elemento, dashboard, CSV
+openpyxl>=3.1.0            # checklist .xlsx
+
+# ── LLMs ─────────────────────────────────────────────────────────────────────
+anthropic>=0.40.0          # Claude (temperature via extra_body: funciona no SDK 0.x e 1.x)
+google-generativeai        # Gemini
