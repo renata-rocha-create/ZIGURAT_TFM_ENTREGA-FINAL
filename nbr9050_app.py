@@ -35,6 +35,7 @@ from llm_auditor import build_audit_prompt, call_anthropic, call_gemini
 from verificacoes import (classificar_status, calcular_resumo,
                           gerar_verificacoes, comparar_com_llm)
 from dashboard import render_aba_elementos, render_dashboard
+from visualizador_3d import extrair_malhas, render_aba_3d
 from relatorios import gerar_relatorio_html, gerar_excel
 
 aplicar_estilo()
@@ -51,6 +52,7 @@ for k, v in {
     "ifc_nome": "",
     "verificacoes": None,   # tabela por elemento (Etapa 2)
     "comparacao": None,     # status LLM × Python (Etapa 2)
+    "malhas": None,         # geometria 3D dos elementos auditados (Etapa 4)
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -172,8 +174,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_upload, tab_resultado, tab_dashboard, tab_elementos, tab_ajuda = st.tabs(
-    ["📁 Arquivos & Execução", "📊 Resultados", "📈 Dashboard", "🔎 Por Elemento", "❓ Ajuda"])
+tab_upload, tab_resultado, tab_dashboard, tab_3d, tab_elementos, tab_ajuda = st.tabs(
+    ["📁 Arquivos & Execução", "📊 Resultados", "📈 Dashboard", "🧊 Modelo 3D",
+     "🔎 Por Elemento", "❓ Ajuda"])
 
 # ─────────────────────────────────────────────
 with tab_upload:
@@ -287,6 +290,7 @@ with tab_upload:
         st.session_state.resultado = None
         st.session_state.verificacoes = None
         st.session_state.comparacao = None
+        st.session_state.malhas = None
 
         log_box = st.empty()
         step_box = st.empty()
@@ -325,6 +329,16 @@ with tab_upload:
             st.session_state.verificacoes = linhas
             n_nc = sum(1 for l in linhas if l["status"] == "Não Conforme")
             log(f"🧮 Verificação por elemento (Python): {len(linhas)} verificações | ❌ {n_nc} não conformes")
+
+            # Step 2c — Geometria 3D (para o visualizador e a câmera do BCF)
+            log("🧊 Extraindo geometria 3D dos elementos auditados...")
+            try:
+                malhas = extrair_malhas(tmp_path, linhas)
+                st.session_state.malhas = malhas
+                log(f"   {len(malhas.get('auditados', []))} elementos auditados + "
+                    f"{len(malhas.get('contexto', []))} de contexto com geometria")
+            except Exception as e_geo:
+                log(f"⚠️ Geometria 3D indisponível ({e_geo}) — auditoria continua sem o 3D")
             progress_bar.progress(45)
 
             # Step 3 — Load rules (sempre do JSON — sem upload de checklist)
@@ -559,7 +573,13 @@ with tab_resultado:
 
 # ─────────────────────────────────────────────
 with tab_dashboard:
-    render_dashboard(st.session_state.verificacoes, st.session_state.resultado)
+    render_dashboard(st.session_state.verificacoes, st.session_state.resultado,
+                     st.session_state.malhas, st.session_state.ifc_nome or "modelo.ifc")
+
+
+# ─────────────────────────────────────────────
+with tab_3d:
+    render_aba_3d(st.session_state.malhas, st.session_state.verificacoes)
 
 
 # ─────────────────────────────────────────────
