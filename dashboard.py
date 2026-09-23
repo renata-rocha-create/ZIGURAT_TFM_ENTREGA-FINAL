@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 
 from verificacoes import classificar_prototipo, CATEGORIAS
+from bcf_export import gerar_bcfzip
 
 ICONE_STATUS = {
     "Conforme": "✅ Conforme",
@@ -214,7 +215,8 @@ def _grafico_confianca(df):
     return _estilo(ch, max(180, 40 * len(ordem)))
 
 
-def render_dashboard(linhas: list[dict] | None, resultado: dict | None) -> None:
+def render_dashboard(linhas: list[dict] | None, resultado: dict | None,
+                     malhas: dict | None = None, arquivo_ifc: str = "modelo.ifc") -> None:
     if not linhas:
         st.markdown(
             '<div class="info-box">Execute a auditoria na aba <strong>Arquivos &amp; '
@@ -284,3 +286,19 @@ def render_dashboard(linhas: list[dict] | None, resultado: dict | None) -> None:
                 "valor_medido": "Medido", "valor_exigido": "Exigido",
                 "mensagem": "Observação", "global_id": "GlobalId",
             })
+
+    # ── Exportação BCF ────────────────────────────────────────────────────────
+    todas = pd.DataFrame(linhas)
+    n_nc_total = int((todas.status == "Não Conforme").sum())
+    if n_nc_total:
+        bcf_bytes, n_top = gerar_bcfzip(linhas, arquivo_ifc, malhas)
+        st.download_button(
+            f"📌 Baixar {n_top} não conformidades em BCF (.bcfzip)",
+            data=bcf_bytes,
+            file_name=f"{arquivo_ifc.rsplit('.', 1)[0]}_NBR9050.bcfzip",
+            mime="application/octet-stream",
+        )
+        st.caption("Abra no BIMcollab Zoom (gratuito): carregue o mesmo IFC e depois importe "
+                   "o .bcfzip — cada não conformidade vira um tópico que leva direto ao "
+                   "elemento. O BCF inclui todas as não conformidades, independente do filtro "
+                   "de pavimento.")
