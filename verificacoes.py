@@ -433,3 +433,27 @@ def comparar_com_llm(linhas: list[dict], resultados_llm: list[dict]) -> dict:
     taxa = round(n_ok / len(comparaveis) * 100, 1) if comparaveis else None
     return {"tabela": tabela, "concordantes": n_ok, "comparaveis": len(comparaveis),
             "taxa_concordancia": taxa}
+
+
+def classificar_prototipo(resultados_llm: list[dict]) -> dict:
+    """
+    Classificação de validação do protótipo, conforme definida em
+    nbr9050_rules.json ("status_validacao_prototipo"):
+      Completo   → nenhum item aplicável ficou Indeterminado
+      Parcial    → há Indeterminados, mas a maioria dos itens foi avaliada
+      Incompleto → a maior parte dos itens aplicáveis ficou Indeterminada
+    Itens N/A (não se aplicam ao modelo) saem da conta.
+    """
+    cats = [classificar_status(r.get("status", "")) for r in (resultados_llm or [])]
+    aplicaveis = [c for c in cats if c != "N/A"]
+    indet = aplicaveis.count("Indeterminado")
+    if not aplicaveis:
+        classe = "Incompleto"
+    elif indet == 0:
+        classe = "Completo"
+    elif indet <= len(aplicaveis) / 2:
+        classe = "Parcial"
+    else:
+        classe = "Incompleto"
+    return {"classe": classe, "avaliados": len(aplicaveis) - indet,
+            "aplicaveis": len(aplicaveis), "indeterminados": indet}
