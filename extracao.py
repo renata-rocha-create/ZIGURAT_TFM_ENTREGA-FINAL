@@ -7,6 +7,26 @@ para os 12 itens da NBR 9050. Não conversa com o LLM nem com a interface.
 from pathlib import Path
 
 
+def _pavimento(el):
+    """
+    Sobe a hierarquia espacial do IFC até achar o IfcBuildingStorey.
+    Ex.: bacia → contida no IfcSpace "WC PNE" → agregado ao pavimento "Térreo".
+    Devolve o nome do pavimento, ou None se não conseguir resolver.
+    """
+    try:
+        from ifcopenshell.util.element import get_container, get_aggregate
+        c = get_container(el)
+        passos = 0
+        while c is not None and not c.is_a("IfcBuildingStorey") and passos < 6:
+            c = get_container(c) or get_aggregate(c)
+            passos += 1
+        if c is not None and c.is_a("IfcBuildingStorey"):
+            return c.Name
+    except Exception:
+        pass
+    return None
+
+
 def _estatisticas_portas(portas_todas: list[dict]) -> dict:
     """
     Calcula min/max e contagem de não conformidades sobre TODAS as portas
@@ -103,6 +123,7 @@ def extract_ifc_elements(ifc_path: str) -> dict:
             "Tag":         getattr(el, "Tag", None),
             "Description": getattr(el, "Description", None),
             "tipo_ifc":    tipo_ifc or el.is_a(),
+            "pavimento":   _pavimento(el),
         }
 
     def buscar_prop(psets, *termos):
@@ -699,5 +720,16 @@ def extract_ifc_elements(ifc_path: str) -> dict:
         d["Height_m"] = buscar_prop(ps, "height", "altura")
         paredes.append(d)
     resultado["elementos"]["IfcWall_amostra"] = paredes
+
+    # ── LISTAS COMPLETAS (sem cortes) para a verificação por elemento ────────
+    # As chaves em resultado["elementos"] são AMOSTRAS (ex: portas[:60]) para
+    # não estourar o prompt do LLM. A verificação em Python (verificacoes.py)
+    # precisa de TODOS os elementos. O "_" no nome indica uso interno: essa
+    # chave NÃO é enviada ao LLM (_resumo_elementos só lê as amostras).
+    resultado["_completo"] = {
+        "portas": portas, "rampas": rampas, "escadas": escadas,
+        "corrimaos": corrimaos, "espacos": espacos, "bacias": bacias,
+        "lavatorios": lavatórios, "barras": barras, "janelas": janelas,
+    }
 
     return limpar_nulos(resultado)
