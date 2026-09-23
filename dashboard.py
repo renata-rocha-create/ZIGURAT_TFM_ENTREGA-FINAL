@@ -150,43 +150,48 @@ def _grafico_status_por_item(df):
     ordem = sorted(df.item_label.unique())
     dom = [s for s in CORES_STATUS if s in set(d.status)]
     ch = alt.Chart(d).mark_bar().encode(
-        y=alt.Y("item_label:N", title=None, sort=ordem),
-        x=alt.X("qtd:Q", title="Nº de elementos verificados"),
+        y=alt.Y("item_label:N", title=None, sort=ordem,
+                axis=alt.Axis(labelLimit=260, labelOverlap=False)),
+        x=alt.X("qtd:Q", title="Nº de elementos verificados",
+                axis=alt.Axis(tickMinStep=1, format="d")),
         color=alt.Color("status:N", title="Status", scale=_escala(CORES_STATUS, dom)),
         tooltip=[alt.Tooltip("item_label:N", title="Item"),
                  alt.Tooltip("status:N", title="Status"),
                  alt.Tooltip("qtd:Q", title="Elementos")],
     )
-    return _estilo(ch, max(160, 34 * len(ordem)))
+    return _estilo(ch, max(180, 40 * len(ordem)))
+
+
+def _cor_celula(pct):
+    """Interpola do verde-claro (0% falhas) ao vermelho (100% falhas)."""
+    if pct is None:
+        return "background-color:#f4f6f9;color:#9ca3af"
+    a, b = (230, 250, 243), (224, 60, 60)
+    t = pct / 100
+    r, g, bl = (round(a[i] + (b[i] - a[i]) * t) for i in range(3))
+    txt = "#ffffff" if pct > 50 else "#1a1d26"
+    return f"background-color:rgb({r},{g},{bl});color:{txt};font-weight:700;text-align:center"
 
 
 def _heatmap_pavimento_item(df):
+    """
+    Matriz pavimento × item como tabela colorida (Pandas Styler).
+    Cada célula = "não conformes / avaliados"; cor pela % de não conformidade.
+    """
     aval = df[df.status.isin(["Conforme", "Não Conforme"])]
     if aval.empty:
         return None
     g = (aval.assign(nc=(aval.status == "Não Conforme").astype(int))
              .groupby(["pavimento", "item_label"])
              .agg(nc=("nc", "sum"), total=("nc", "size")).reset_index())
-    g["pct_nc"] = (g.nc / g.total * 100).round(0)
-    g["rotulo"] = g.nc.astype(str) + "/" + g.total.astype(str)
-    base = alt.Chart(g).encode(
-        x=alt.X("item_label:N", title=None, axis=alt.Axis(labelAngle=-30)),
-        y=alt.Y("pavimento:N", title=None),
-    )
-    rect = base.mark_rect(cornerRadius=4).encode(
-        color=alt.Color("pct_nc:Q", title="% não conforme",
-                        scale=alt.Scale(domain=[0, 100], range=["#e6faf3", "#e03c3c"])),
-        tooltip=[alt.Tooltip("pavimento:N", title="Pavimento"),
-                 alt.Tooltip("item_label:N", title="Item"),
-                 alt.Tooltip("rotulo:N", title="Não conformes / avaliados"),
-                 alt.Tooltip("pct_nc:Q", title="% não conforme")],
-    )
-    txt = base.mark_text(fontSize=12, fontWeight="bold").encode(
-        text="rotulo:N",
-        color=alt.condition("datum.pct_nc > 50", alt.value("white"), alt.value("#1a1d26")),
-    )
-    n_pav = g.pavimento.nunique()
-    return _estilo(rect + txt, max(90, 55 * n_pav))
+    rotulo = g.assign(r=g.nc.astype(str) + "/" + g.total.astype(str)) \
+              .pivot(index="pavimento", columns="item_label", values="r").fillna("—")
+    pct = g.assign(p=g.nc / g.total * 100) \
+           .pivot(index="pavimento", columns="item_label", values="p")
+    estilos = pct.apply(lambda col: col.map(lambda v: _cor_celula(None if pd.isna(v) else v)))
+    rotulo.index.name = "Pavimento"
+    rotulo.columns.name = None
+    return rotulo.style.apply(lambda _: estilos.values, axis=None)
 
 
 def _grafico_confianca(df):
@@ -194,7 +199,8 @@ def _grafico_confianca(df):
     d["conf_rotulo"] = d.confianca.map(ROTULO_CONF)
     ordem = sorted(df.item_label.unique())
     ch = alt.Chart(d).mark_bar().encode(
-        y=alt.Y("item_label:N", title=None, sort=ordem),
+        y=alt.Y("item_label:N", title=None, sort=ordem,
+                axis=alt.Axis(labelLimit=260, labelOverlap=False)),
         x=alt.X("qtd:Q", title="Nº de verificações", stack="normalize",
                 axis=alt.Axis(format="%")),
         color=alt.Color("conf_rotulo:N", title="Confiança",
@@ -205,7 +211,7 @@ def _grafico_confianca(df):
                  alt.Tooltip("conf_rotulo:N", title="Confiança"),
                  alt.Tooltip("qtd:Q", title="Verificações")],
     )
-    return _estilo(ch, max(160, 34 * len(ordem)))
+    return _estilo(ch, max(180, 40 * len(ordem)))
 
 
 def render_dashboard(linhas: list[dict] | None, resultado: dict | None) -> None:
@@ -246,17 +252,17 @@ def render_dashboard(linhas: list[dict] | None, resultado: dict | None) -> None:
     with col1:
         st.markdown('<div class="section-title">📊 Status por item da NBR</div>',
                     unsafe_allow_html=True)
-        st.altair_chart(_grafico_status_por_item(df), use_container_width=True)
+        st.altair_chart(_grafico_status_por_item(df), use_container_width=True, theme=None)
     with col2:
         st.markdown('<div class="section-title">🎯 Confiança dos dados por item</div>',
                     unsafe_allow_html=True)
-        st.altair_chart(_grafico_confianca(df), use_container_width=True)
+        st.altair_chart(_grafico_confianca(df), use_container_width=True, theme=None)
 
     st.markdown('<div class="section-title">🗺️ Onde estão os problemas: pavimento × item</div>',
                 unsafe_allow_html=True)
     hm = _heatmap_pavimento_item(df)
     if hm is not None:
-        st.altair_chart(hm, use_container_width=True)
+        st.dataframe(hm, use_container_width=True)
         st.caption("Cada célula mostra não conformes / elementos avaliados. "
                    "Quanto mais vermelha, maior a concentração de falhas.")
     else:
