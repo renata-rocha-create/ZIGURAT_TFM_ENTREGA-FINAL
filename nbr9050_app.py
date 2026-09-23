@@ -32,7 +32,9 @@ from ui_style import aplicar_estilo, status_badge
 from extracao import extract_ifc_elements
 from regras import obter_regras_lista
 from llm_auditor import build_audit_prompt, call_anthropic, call_gemini
-from verificacoes import classificar_status, calcular_resumo
+from verificacoes import (classificar_status, calcular_resumo,
+                          gerar_verificacoes, comparar_com_llm)
+from dashboard import render_aba_elementos
 from relatorios import gerar_relatorio_html, gerar_excel
 
 aplicar_estilo()
@@ -47,6 +49,8 @@ for k, v in {
     "logs": [],
     "running": False,
     "ifc_nome": "",
+    "verificacoes": None,   # tabela por elemento (Etapa 2)
+    "comparacao": None,     # status LLM × Python (Etapa 2)
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -168,7 +172,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_upload, tab_resultado, tab_ajuda = st.tabs(["📁 Arquivos & Execução", "📊 Resultados", "❓ Ajuda"])
+tab_upload, tab_resultado, tab_elementos, tab_ajuda = st.tabs(
+    ["📁 Arquivos & Execução", "📊 Resultados", "🔎 Por Elemento", "❓ Ajuda"])
 
 # ─────────────────────────────────────────────
 with tab_upload:
@@ -280,6 +285,8 @@ with tab_upload:
     if run and can_run:
         st.session_state.logs = []
         st.session_state.resultado = None
+        st.session_state.verificacoes = None
+        st.session_state.comparacao = None
 
         log_box = st.empty()
         step_box = st.empty()
@@ -312,6 +319,12 @@ with tab_upload:
             log(f"✅ Elementos extraídos: {resumo_ext}")
             log(f"   Schema IFC detectado: {elementos.get('schema','?')}")
             st.session_state.elementos = elementos
+
+            # Step 2b — Verificação por elemento (Python, determinística)
+            linhas = gerar_verificacoes(elementos)
+            st.session_state.verificacoes = linhas
+            n_nc = sum(1 for l in linhas if l["status"] == "Não Conforme")
+            log(f"🧮 Verificação por elemento (Python): {len(linhas)} verificações | ❌ {n_nc} não conformes")
             progress_bar.progress(45)
 
             # Step 3 — Load rules (sempre do JSON — sem upload de checklist)
@@ -352,6 +365,14 @@ with tab_upload:
             # ter feito a soma/divisão certa (ver calcular_resumo() para o porquê).
             resultado["resumo"] = calcular_resumo(resultado.get("resultados", []))
             log("🧮 Resumo e metadados recalculados em Python (não dependem do eco do LLM).")
+
+            # Comparação item a item: status do LLM × status calculado em Python
+            comparacao = comparar_com_llm(st.session_state.verificacoes, resultado.get("resultados", []))
+            st.session_state.comparacao = comparacao
+            resultado["verificacoes_por_elemento"] = st.session_state.verificacoes
+            resultado["comparacao_llm_python"] = comparacao
+            if comparacao["taxa_concordancia"] is not None:
+                log(f"🤝 Concordância LLM × Python: {comparacao['concordantes']}/{comparacao['comparaveis']} itens ({comparacao['taxa_concordancia']}%)")
 
             resumo = resultado["resumo"]
             log(f"   Total: {resumo.get('total',0)} | ✅ {resumo.get('conformes',0)} | ▲ {resumo.get('parciais',0)} | ❌ {resumo.get('nao_conformes',0)} | ⚠️ {resumo.get('indeterminados',0)}")
@@ -534,6 +555,11 @@ with tab_resultado:
         # JSON expandable
         with st.expander("🔍 Ver JSON bruto da auditoria"):
             st.json(resultado)
+
+
+# ─────────────────────────────────────────────
+with tab_elementos:
+    render_aba_elementos(st.session_state.verificacoes, st.session_state.comparacao)
 
 
 # ─────────────────────────────────────────────
