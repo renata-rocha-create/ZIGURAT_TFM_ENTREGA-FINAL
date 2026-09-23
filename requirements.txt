@@ -1,6 +1,6 @@
 # ── Interface ────────────────────────────────────────────────────────────────
 streamlit>=1.35.0          # app web (st.toggle, column_config, altair_chart theme=None)
-altair>=4.2.0,<6           # gráficos do Dashboard (já vem com o Streamlit; listado por clareza)
+# altair: NÃO listar — vem com o Streamlit na versão compatível com o Python do servidor
 plotly>=5.20.0             # visualizador 3D (aba "Modelo 3D")
 
 # ── BIM / geometria ──────────────────────────────────────────────────────────
