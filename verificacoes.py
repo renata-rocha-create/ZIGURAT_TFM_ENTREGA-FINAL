@@ -145,12 +145,20 @@ def _num(v):
         return None
 
 
+def _nome(el):
+    # IfcSpace do Revit: Name = número do ambiente ("14"), LongName = nome ("Corredor")
+    n, ln = el.get("Name"), el.get("LongName")
+    if n and ln and n != ln:
+        return f"{n} — {ln}"
+    return ln or n or el.get("ObjectType") or "—"
+
+
 def _linha(el, item, medido, exigido, status, fonte, msg=""):
     return {
         "item_nbr": item,
         "categoria": CATEGORIAS.get(item, ""),
         "global_id": el.get("GlobalId"),
-        "nome": el.get("Name") or el.get("ObjectType") or "—",
+        "nome": _nome(el),
         "ifc_class": el.get("tipo_ifc"),
         "pavimento": el.get("pavimento") or "—",
         "valor_medido": medido,
