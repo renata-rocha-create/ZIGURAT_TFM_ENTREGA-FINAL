@@ -33,7 +33,8 @@ def status_por_elemento(linhas: list[dict]) -> dict:
         gid = l["global_id"]
         atual = out.get(gid)
         if atual is None:
-            out[gid] = {"status": l["status"], "nome": l["nome"], "itens": [l["item_nbr"]]}
+            out[gid] = {"status": l["status"], "nome": l["nome"], "itens": [l["item_nbr"]],
+                        "ifc_class": l.get("ifc_class", "")}
         else:
             atual["itens"].append(l["item_nbr"])
             if PRIORIDADE.get(l["status"], 0) > PRIORIDADE.get(atual["status"], 0):
@@ -82,6 +83,7 @@ def extrair_malhas(ifc_path: str, linhas: list[dict]) -> dict:
         v, f = m
         auditados.append({
             "global_id": gid, "nome": dados["nome"], "status": dados["status"],
+            "ifc_class": dados.get("ifc_class", ""),
             "itens": ", ".join(sorted(set(dados["itens"]))),
             "verts": v, "faces": f,
             "bbox_min": v.min(axis=0).tolist(), "bbox_max": v.max(axis=0).tolist(),
@@ -135,17 +137,27 @@ def _figura(malhas, gid_destaque=None, status_visiveis=None, mostrar_contexto=Tr
             hoverinfo="skip", showlegend=True, flatshading=True))
 
     ja_na_legenda = set()
-    for a in malhas["auditados"]:
+    # Espaços (IfcSpace) são volumes de AR: desenhados primeiro e bem
+    # translúcidos, como um "ghost" — senão escondem as louças e barras.
+    ordem = sorted(malhas["auditados"], key=lambda a: a.get("ifc_class") != "IfcSpace")
+    for a in ordem:
         if status_visiveis and a["status"] not in status_visiveis:
             continue
         destaque = a["global_id"] == gid_destaque
         v = a["verts"] - origem
         f = a["faces"]
         cor = COR_DESTAQUE if destaque else CORES.get(a["status"], "#9ca3af")
-        grupo = "Selecionado" if destaque else a["status"]
+        eh_espaco = a.get("ifc_class") == "IfcSpace"
+        grupo = "Selecionado" if destaque else (f"{a['status']} (ambiente)" if eh_espaco else a["status"])
+        if destaque:
+            opac = 0.45 if eh_espaco else 1.0
+        elif eh_espaco:
+            opac = 0.10
+        else:
+            opac = 1.0 if not gid_destaque else 0.35
         fig.add_trace(go.Mesh3d(
             x=v[:, 0], y=v[:, 1], z=v[:, 2], i=f[:, 0], j=f[:, 1], k=f[:, 2],
-            color=cor, opacity=1.0 if (destaque or not gid_destaque) else 0.35,
+            color=cor, opacity=opac,
             name=grupo, legendgroup=grupo, showlegend=grupo not in ja_na_legenda,
             flatshading=True,
             hovertemplate=(f"<b>{a['nome'][:60]}</b><br>Status: {a['status']}<br>"
