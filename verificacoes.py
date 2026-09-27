@@ -314,6 +314,10 @@ def _altura_equip(el):
     mh = _num(el.get("MountingHeight_m"))
     if mh is not None:
         return mh, "pset_mountingheight"
+    if el.get("fonte_altura"):          # altura tirada do bounding box da geometria
+        h = _num(el.get("altura_estimada_m"))
+        if h is not None:
+            return h, el["fonte_altura"]
     z = _num(el.get("altura_estimada_m") or el.get("Z_placement_m"))
     if z is not None:
         return z, "z_placement_proxy"
@@ -343,7 +347,8 @@ def _v_barras(barras):
             linhas.append(_linha(b, "7.6-7.8", "—", exig, "Indeterminado", fonte, "Sem altura disponível."))
             continue
         ok = abs(h - BARRA_ALT_REF) <= BARRA_TOL
-        linhas.append(_linha(b, "7.6-7.8", f"altura={h:.3f} m", exig,
+        ref = "base da barra vertical" if b.get("barra_vertical") else "altura"
+        linhas.append(_linha(b, "7.6-7.8", f"{ref}={h:.3f} m", exig,
                              "Conforme" if ok else "Não Conforme", fonte,
                              "Posição (lateral/fundo) não verificada."))
     return linhas
