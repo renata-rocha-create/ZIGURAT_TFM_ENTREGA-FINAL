@@ -177,11 +177,28 @@ def extract_ifc_elements(ifc_path: str) -> dict:
     # portas de sanitários PNE/PCD — as demais portas do modelo ficam fora do
     # escopo dessa checagem específica. Verifica: (1) nome/tipo do próprio
     # elemento; (2) se ausente, nome do IfcSpace que o contém.
-    TERMOS_ACESSIVEL = ["pne", "pcd"]
+    # "PNE" é termo antigo; a NBR 9050 usa "acessível". Aceita as duas famílias.
+    TERMOS_ACESSIVEL = ["pne", "pcd", "acessivel", "acessível", "accessible", "acessibilidade"]
     try:
         from ifcopenshell.util.element import get_container as _get_container
     except Exception:
         _get_container = None
+
+    # Mapa pavimento → [é acessível?] para cada IfcSpace de sanitário.
+    # Serve de fallback quando louças/barras estão contidas direto no PAVIMENTO
+    # (sem IfcSpace como container): se TODOS os sanitários daquele pavimento
+    # são acessíveis, os equipamentos do pavimento são considerados acessíveis.
+    _TERMOS_SAN_PAV = ["banheiro", "sanitário", "sanitario", "wc", "lavabo",
+                       "toalete", "vestiário", "vestiario", "banho", "bath", "toilet"]
+    _san_por_pav = {}
+    try:
+        for _sp in ifc.by_type("IfcSpace"):
+            _nm = ((_sp.Name or "") + " " + (getattr(_sp, "LongName", "") or "")).lower()
+            if any(t in _nm for t in _TERMOS_SAN_PAV):
+                _san_por_pav.setdefault(_pavimento(_sp), []).append(
+                    any(t in _nm for t in TERMOS_ACESSIVEL))
+    except Exception:
+        pass
 
     def eh_acessivel_pne(el, texto_proprio):
         if any(t in texto_proprio for t in TERMOS_ACESSIVEL):
@@ -195,6 +212,9 @@ def extract_ifc_elements(ifc_path: str) -> dict:
                         return True, "nome_espaco_continente"
             except Exception:
                 pass
+        flags = _san_por_pav.get(_pavimento(el))
+        if flags and all(flags):
+            return True, "pavimento_so_sanitarios_acessiveis"
         return False, None
 
     # ── 1. PORTAS (6.11.2, 4.6.6) ────────────────────────────────────────────
@@ -414,7 +434,18 @@ def extract_ifc_elements(ifc_path: str) -> dict:
     TOLERANCIA_ALTURA = 0.03  # 3cm de tolerância pra bater com 0,70m/0,92m
     corrimaos = []
     algum_com_corrimao_duplo = False
+    # Barras de apoio de sanitário às vezes são exportadas como IfcRailing
+    # (PredefinedType HANDRAIL, ObjectType "BathroomGrabBar"). Elas NÃO são
+    # corrimão de escada/rampa: saem daqui e entram nos itens 7.6–7.8.
+    TERMOS_GRAB = ["barra de apoio", "barra apoio", "grab bar", "grabbar", "grab_bar"]
+
+    def _eh_barra_apoio(el):
+        txt = " ".join(str(getattr(el, a, "") or "") for a in ("Name", "ObjectType", "Tag", "Description")).lower()
+        return any(t in txt for t in TERMOS_GRAB)
+
     for el in ifc.by_type("IfcRailing"):
+        if _eh_barra_apoio(el):
+            continue
         d = info_basica(el, "IfcRailing")
         ps = todos_psets(el)
         d["Psets"] = ps
@@ -473,7 +504,7 @@ def extract_ifc_elements(ifc_path: str) -> dict:
             TERMOS_SANITARIO = ["banheiro", "sanitário", "sanitario", "wc",
                                 "lavabo", "toalete", "vestiário", "vestiario",
                                 "banho", "bath", "toilet"]
-            TERMOS_ACESSIVEL_SPACE = ["pne", "pcd"]
+            TERMOS_ACESSIVEL_SPACE = TERMOS_ACESSIVEL
 
             for el in ifc.by_type("IfcSpace"):
                 d = info_basica(el, "IfcSpace")
@@ -663,6 +694,105 @@ def extract_ifc_elements(ifc_path: str) -> dict:
         else:
             d["categoria_sanitario"] = "outros"
             outros_san.append(d)
+
+    # Barras de apoio fora de IfcFlowTerminal (comum em IFC4 e em modelos
+    # gerados por outras ferramentas): IfcRailing, IfcFurnishingElement, Proxy
+    for classe in ("IfcRailing", "IfcFurnishingElement", "IfcBuildingElementProxy"):
+        try:
+            candidatos = ifc.by_type(classe)
+        except Exception:
+            candidatos = []
+        for el in candidatos:
+            if not _eh_barra_apoio(el):
+                continue
+            d = info_basica(el, classe)
+            ps = todos_psets(el)
+            d["Psets"] = ps
+            mh = buscar_prop(ps, "mountingheight", "mounting", "instalacao", "installation")
+            d["MountingHeight_m"] = mh
+            z = get_z_placement(el)
+            if z:
+                d["Z_placement_m"] = z
+                if not mh:
+                    d["altura_estimada_m"] = z
+            texto = " ".join(str(getattr(el, a, "") or "") for a in ("Name", "ObjectType")).lower()
+            pne_ok, pne_fonte = eh_acessivel_pne(el, texto)
+            d["pne_pcd_confirmado"] = pne_ok
+            if pne_fonte:
+                d["pne_pcd_fonte"] = pne_fonte
+            d["categoria_sanitario"] = "barra_apoio"
+            (barras if pne_ok else excluidos_sem_pne).append(d)
+
+    # Altura pela GEOMETRIA quando não há MountingHeight nem Z do placement
+    # (ex: família posicionada na origem com a geometria deslocada dentro dela).
+    # Usa o bounding box em coordenadas do mundo, relativo à cota do pavimento.
+    try:
+        import numpy as _np
+        import ifcopenshell.geom as _geom
+        import ifcopenshell.util.unit as _uu
+        import ifcopenshell.util.placement as _up
+        _gs = _geom.settings()
+        _gs.set(_gs.USE_WORLD_COORDS, True)
+        _escala = _uu.calculate_unit_scale(ifc)   # unidade do projeto → metros
+    except Exception:
+        _gs = None
+
+    def _cota_pavimento(el):
+        try:
+            from ifcopenshell.util.element import get_container, get_aggregate
+            c = get_container(el) or get_aggregate(el)
+            passos = 0
+            while c is not None and not c.is_a("IfcBuildingStorey") and passos < 6:
+                c = get_container(c) or get_aggregate(c)
+                passos += 1
+            if c is not None and c.ObjectPlacement is not None:
+                return float(_up.get_local_placement(c.ObjectPlacement)[2][3]) * _escala
+        except Exception:
+            pass
+        return 0.0
+
+    def _alturas_geometricas(el):
+        if _gs is None:
+            return None
+        try:
+            sh = _geom.create_shape(_gs, el)
+            v = _np.array(sh.geometry.verts, dtype=float).reshape(-1, 3)
+            if not len(v):
+                return None
+            base = _cota_pavimento(el)
+            zmin, zmax = float(v[:, 2].min()) - base, float(v[:, 2].max()) - base
+            alt = zmax - zmin
+            larg = max(float(_np.ptp(v[:, 0])), float(_np.ptp(v[:, 1])))
+            return {"zmin": round(zmin, 3), "zmax": round(zmax, 3),
+                    "zcentro": round((zmin + zmax) / 2, 3), "vertical": alt > larg}
+        except Exception:
+            return None
+
+    for lista, categoria in ((bacias, "bacia"), (barras, "barra")):
+        for d in lista:
+            if d.get("MountingHeight_m") or d.get("Z_placement_m"):
+                continue
+            try:
+                el = ifc.by_guid(d["GlobalId"])
+            except Exception:
+                continue
+            g = _alturas_geometricas(el)
+            if not g:
+                continue
+            d["geometria_alturas"] = g
+            if categoria == "bacia":
+                # topo da peça ≈ borda superior (pode incluir o assento)
+                d["altura_estimada_m"] = g["zmax"]
+                d["fonte_altura"] = "geometria_bbox_topo"
+            elif g["vertical"]:
+                # barra vertical: a NBR cobra a altura de INÍCIO da barra
+                d["altura_estimada_m"] = g["zmin"]
+                d["fonte_altura"] = "geometria_bbox_base_barra_vertical"
+                d["barra_vertical"] = True
+            else:
+                # barra horizontal: altura do eixo da barra
+                d["altura_estimada_m"] = g["zcentro"]
+                d["fonte_altura"] = "geometria_bbox_eixo_barra_horizontal"
 
     resultado["elementos"]["Bacias"]    = bacias[:20]
     resultado["elementos"]["Lavatorios"] = lavatórios[:20]
