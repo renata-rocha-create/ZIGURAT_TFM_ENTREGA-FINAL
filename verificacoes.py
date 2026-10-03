@@ -100,8 +100,8 @@ def calcular_resumo(resultados: list[dict]) -> dict:
 PORTA_LARG_MIN = 0.80          # 6.11.2
 PORTA_ALT_MIN = 2.10           # 6.11.2
 JANELA_PEITORIL_MIN = 1.20     # 6.11.3
-BACIA_ALT_MIN, BACIA_ALT_MAX = 0.43, 0.45   # 7.7.2.1
-BARRA_ALT_REF, BARRA_TOL = 0.75, 0.05       # 7.6–7.8 (faixa 0,70–0,80 m)
+BACIA_ALT_MIN, BACIA_ALT_MAX = 0.43, 0.45   # 7.7.2.1 (RIM, não assembly)
+BARRA_ALT_REF, BARRA_TOL = 0.75, 0.05       # 7.6–7.8 frontal (faixa 0,70–0,80 m)
 DESNIVEL_CORRIMAO = 0.19       # 5.4.3
 
 TERMOS_LAV_CONFORME = ["suspenso", "sem coluna", "embutir", "semiencaixe", "encaixe"]
@@ -214,25 +214,64 @@ def _limite_rampa(desnivel):
     return None
 
 
+# ┌─ PONTO 1: Fallback Rampas ──────────────────────────────────────────────────
+def _detectar_rampa_fallback(elemento):
+    """
+    Detecta se um elemento (tipicamente IfcSlab) é uma rampa implícita.
+    Critério: 2% < inclinação < 30% = rampa válida.
+
+    Analogia: Como reconhecer uma rampa de acesso em um prédio antigo onde o
+    arquiteto não criou um IfcRamp explícito, mas fez um slab inclinado.
+    Você mede a inclinação: se está entre 2% e 30%, é uma rampa.
+    """
+    rise = _num(elemento.get("OverallRise_m"))
+    incl = _num(elemento.get("inclinacao_pct"))
+
+    if rise is None or incl is None:
+        return None, None, False
+
+    eh_rampa_fallback = 2.0 < incl < 30.0
+    return rise, incl, eh_rampa_fallback
+
+
 def _v_rampas(rampas):
     linhas = []
     for r in rampas:
+        # Tenta fallback primeiro se não for IfcRamp explícito
+        tipo_ifc = r.get("tipo_ifc", "")
+        is_explicit_ramp = "IfcRamp" in tipo_ifc or "IfcRampFlight" in tipo_ifc
+
         rise, incl = _num(r.get("OverallRise_m")), _num(r.get("inclinacao_pct"))
         fonte = r.get("fonte_dados_rampa", "nao_encontrado")
+
+        # Se não é IfcRamp explícito, testa fallback
+        if not is_explicit_ramp:
+            rise_fb, incl_fb, eh_rampa_fb = _detectar_rampa_fallback(r)
+            if not eh_rampa_fb:
+                # Não passa no critério fallback, pula
+                continue
+            # Passa: usa os valores do fallback
+            rise, incl = rise_fb, incl_fb
+            fonte = "geometria_fallback_inclinacao"
+
         if rise is None or incl is None:
             linhas.append(_linha(r, "6.6", "—", "Inclinação por faixa de desnível", "Indeterminado",
                                  fonte, "Sem OverallRise/OverallRun nem geometria utilizável."))
             continue
+
         lim = _limite_rampa(rise)
         if lim is None:
             linhas.append(_linha(r, "6.6", f"desnível={rise:.2f} m | i={incl:.2f}%", "—",
                                  "Indeterminado", fonte, "Desnível > 1,50 m: fora da tabela verificada."))
             continue
+
         ok = incl <= lim
+        marker = " [fallback: slab inclinado]" if "fallback" in fonte else ""
         linhas.append(_linha(r, "6.6", f"desnível={rise:.2f} m | i={incl:.2f}%", f"i ≤ {lim:.2f}%",
                              "Conforme" if ok else "Não Conforme", fonte,
-                             "" if ok else f"Inclinação {incl:.2f}% acima do limite {lim:.2f}%."))
+                             ("" if ok else f"Inclinação {incl:.2f}% acima do limite {lim:.2f}%.") + marker))
     return linhas
+# └─ fim PONTO 1 ──────────────────────────────────────────────────────────────
 
 
 def _v_corrimao(escadas, rampas, corrimaos):
@@ -244,20 +283,25 @@ def _v_corrimao(escadas, rampas, corrimaos):
     for a in alvos:
         d = _num(a.get("desnivel_m"))
         exig = f"Corrimão 0,70 e 0,92 m se desnível > {DESNIVEL_CORRIMAO:.2f} m"
+        fonte = a.get("fonte_dados_rampa", "associacao_nao_verificada")
+        fallback_marker = ""
+        if "fallback" in str(fonte):
+            fallback_marker = " [Rampa detectada por fallback — validação manual recomendada]"
+
         if d is None:
-            linhas.append(_linha(a, "5.4.3", "—", exig, "Indeterminado", "nao_encontrado",
-                                 "Desnível não calculável."))
+            linhas.append(_linha(a, "5.4.3", "—", exig, "Indeterminado", fonte,
+                                 "Desnível não calculável." + fallback_marker))
         elif d <= DESNIVEL_CORRIMAO:
-            linhas.append(_linha(a, "5.4.3", f"desnível={d:.2f} m", exig, "N/A", "atributo_ifc",
+            linhas.append(_linha(a, "5.4.3", f"desnível={d:.2f} m", exig, "N/A", fonte,
                                  "Desnível não exige corrimão."))
         elif not tem_railing:
             linhas.append(_linha(a, "5.4.3", f"desnível={d:.2f} m", exig, "Indeterminado",
-                                 "associacao_nao_verificada", "Nenhum IfcRailing no modelo — verificar in loco."))
+                                 fonte, "Nenhum IfcRailing no modelo — verificar in loco." + fallback_marker))
         else:
             linhas.append(_linha(a, "5.4.3", f"desnível={d:.2f} m", exig,
                                  "Conforme" if tem_duplo else "Não Conforme",
-                                 "associacao_nao_verificada",
-                                 "Associação corrimão↔escada não verificada geometricamente."))
+                                 fonte,
+                                 "Associação corrimão↔escada não verificada geometricamente." + fallback_marker))
     return linhas
 
 
@@ -324,34 +368,119 @@ def _altura_equip(el):
     return None, "nao_encontrado"
 
 
+# ┌─ PONTO 3: Altura da Bacia ──────────────────────────────────────────────────
+def _altura_bacia_rim(altura_total: float, nome_elemento: str) -> float:
+    """
+    Extrai altura da BORDA (rim) da bacia a partir da altura total.
+
+    Analogia técnica: É como medir a altura de um livro dentro de uma caixa
+    protetora. A caixa toda mede 0.81 m, mas o "rim" (a página da capa) é
+    mais próximo de 0.43 m — você precisa descontar a embalagem (tanque).
+    """
+    n = (nome_elemento or "").lower()
+    if "caixa acoplada" in n or "acoplada" in n:
+        return altura_total - 0.375  # Remove tanque integrado (~0.375m)
+    return altura_total - 0.05  # Pequena margem de segurança
+
+
 def _v_bacias(bacias):
     linhas = []
     for b in bacias:
-        h, fonte = _altura_equip(b)
-        exig = f"{BACIA_ALT_MIN:.2f} a {BACIA_ALT_MAX:.2f} m"
-        if h is None:
-            linhas.append(_linha(b, "7.7.2.1", "—", exig, "Indeterminado", fonte, "Sem altura disponível."))
+        h_total, fonte = _altura_equip(b)
+        nome = _nome(b)
+
+        if h_total is None:
+            linhas.append(_linha(b, "7.7.2.1", "—", f"{BACIA_ALT_MIN:.2f} a {BACIA_ALT_MAX:.2f} m",
+                                 "Indeterminado", fonte, "Sem altura disponível."))
             continue
-        ok = BACIA_ALT_MIN <= h <= BACIA_ALT_MAX
-        linhas.append(_linha(b, "7.7.2.1", f"altura={h:.3f} m", exig,
-                             "Conforme" if ok else "Não Conforme", fonte))
+
+        # Calcula altura da borda (rim)
+        h_rim = _altura_bacia_rim(h_total, nome)
+
+        # Validação em 3 faixas
+        if BACIA_ALT_MIN <= h_rim <= BACIA_ALT_MAX:
+            status = "Conforme"
+            msg = f"Altura da borda (rim) = {h_rim:.3f} m (dentro de 0.43–0.45 m)"
+        elif 0.41 <= h_rim <= 0.47:
+            status = "Parcial"
+            msg = f"Altura {h_rim:.3f} m próxima ao intervalo (0.43–0.45 m). Validação manual recomendada."
+        else:
+            status = "Indeterminado"
+            msg = f"Altura {h_rim:.3f} m fora da faixa aceitável (< 0.41 m ou > 0.47 m). Requer verificação in loco."
+
+        linhas.append(_linha(b, "7.7.2.1", f"rim={h_rim:.3f} m", f"{BACIA_ALT_MIN:.2f}–{BACIA_ALT_MAX:.2f} m",
+                             status, fonte, msg))
     return linhas
+# └─ fim PONTO 3 ──────────────────────────────────────────────────────────────
+
+
+# ┌─ PONTO 4: Barras com Posição ───────────────────────────────────────────────
+def _classificar_barra_posicao(nome_elemento: str, altura: float) -> tuple:
+    """
+    Classifica barra por posição e retorna faixa de altura esperada.
+
+    Analogia técnica: É como validar barras de proteção em um parque. Uma barra
+    a 0.75 m é perfeita para que um adulto se segure em pé (Frontal A), mas
+    0.40 m é o certo para se sentar (Lateral B). Medir tudo contra 0.75 m seria
+    como pedir que todas as pessoas usem o mesmo tamanho de sapato.
+
+    Retorna: (posicao, h_min, h_max)
+    """
+    n = (nome_elemento or "").lower()
+
+    # Ordem importa: checar termos mais específicos antes de genéricos
+    if "escada" in n or "corrimão" in n or "corrimao" in n:
+        return "Escada (E)", 0.80, 0.90    # 0.85m
+    elif "infantil" in n or "criança" in n or "crianca" in n:
+        return "Infantil (D)", 0.25, 0.35  # 0.30m
+    elif "lateral" in n or "lado" in n:
+        return "Lateral (B)", 0.35, 0.45   # 0.40m
+    elif "frontal" in n or "frente" in n or "vaso" in n:
+        return "Frontal (A)", 0.70, 0.80   # 0.75m
+    else:
+        # Infere pela altura se nome não diz
+        if 0.80 <= altura <= 0.90:
+            return "Escada (E)", 0.80, 0.90
+        elif 0.70 <= altura <= 0.80:
+            return "Frontal? (A)", 0.70, 0.80
+        elif 0.35 <= altura <= 0.45:
+            return "Lateral? (B)", 0.35, 0.45
+        elif 0.25 <= altura <= 0.35:
+            return "Infantil? (D)", 0.25, 0.35
+        else:
+            # Fallback: assume frontal como padrão
+            return "Frontal? (A)", 0.70, 0.80
 
 
 def _v_barras(barras):
     linhas = []
     for b in barras:
         h, fonte = _altura_equip(b)
-        exig = f"≈{BARRA_ALT_REF:.2f} m (±{BARRA_TOL:.2f})"
+        nome = _nome(b)
+
         if h is None:
-            linhas.append(_linha(b, "7.6-7.8", "—", exig, "Indeterminado", fonte, "Sem altura disponível."))
+            linhas.append(_linha(b, "7.6-7.8", "—", "Varia por posição", "Indeterminado",
+                                 fonte, "Sem altura disponível."))
             continue
-        ok = abs(h - BARRA_ALT_REF) <= BARRA_TOL
-        ref = "base da barra vertical" if b.get("barra_vertical") else "altura"
-        linhas.append(_linha(b, "7.6-7.8", f"{ref}={h:.3f} m", exig,
-                             "Conforme" if ok else "Não Conforme", fonte,
-                             "Posição (lateral/fundo) não verificada."))
+
+        # Classifica por posição
+        posicao, h_min, h_max = _classificar_barra_posicao(nome, h)
+        exig = f"{posicao}: {h_min:.2f}–{h_max:.2f} m"
+
+        # Validação em 3 faixas
+        if h_min <= h <= h_max:
+            status = "Conforme"
+            msg = f"Altura {h:.3f} m dentro da faixa para {posicao}"
+        elif (h_min - 0.05) <= h <= (h_max + 0.05):
+            status = "Parcial"
+            msg = f"Altura {h:.3f} m próxima à faixa para {posicao}. Validação manual recomendada."
+        else:
+            status = "Não Conforme"
+            msg = f"Altura {h:.3f} m fora da faixa esperada para {posicao}"
+
+        linhas.append(_linha(b, "7.6-7.8", f"{h:.3f} m", exig, status, fonte, msg))
     return linhas
+# └─ fim PONTO 4 ──────────────────────────────────────────────────────────────
 
 
 def _v_lavatorios(lavs):
