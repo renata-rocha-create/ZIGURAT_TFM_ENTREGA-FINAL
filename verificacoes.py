@@ -7,6 +7,9 @@ confiança derivado da origem do dado.
 """
 
 
+from geometria_nbr import dist_bbox
+
+
 def classificar_status(status: str) -> str:
     """
     Classifica a string de status livre devolvida pelo LLM numa das 5 categorias
@@ -543,50 +546,213 @@ def _v_bacias(bacias):
 # └─ fim PONTO 3 ──────────────────────────────────────────────────────────────
 
 
-# ┌─ PONTO 4: Barras de apoio ─────────────────────────────────────────────────
-# Referência: nbr9050_rules.json (itens 7.6–7.8) → barras horizontais a ~0,75 m.
+# ┌─ PONTO 4: Barras de apoio (NBR 9050:2020 — 7.7.2.2 bacia | 7.8.1 lavatório) ─
 #
-# Analogia: a extração (extracao.py) já "olha" a caixa envolvente (bounding box)
-# de cada barra e diz se ela está DEITADA (horizontal → mede o eixo) ou EM PÉ
-# (vertical → mede a base). Aqui só aplicamos a régua certa a cada caso:
-#   horizontal  0,70–0,80 m → Conforme
-#               0,65–0,85 m → Parcial (perto do limite — conferir na mão)
-#               fora disso  → Indeterminado (pode ser barra de lavatório,
-#                             de porta ou modelada errada — conferir in loco)
-#   vertical    → Indeterminado: a posição depende da barra horizontal vizinha,
-#                 o que exige análise espacial ainda não implementada.
+# Cada barra é comparada com a regra DA PEÇA A QUE SERVE — não com uma régua
+# única. Analogia: é como conferir pilares e vigas — cada elemento tem a sua
+# tabela; medir tudo pela tabela do pilar reprova a viga que está certa.
+#
+# 1) Associação: a barra pertence à peça (bacia ou lavatório) mais próxima em
+#    planta (até 1,0 m).
+# 2) Tipo, pela geometria:
+#    bacia + vertical                         → VERTICAL LATERAL (7.7.2.2.1)
+#    bacia + horizontal paralela à bacia      → HORIZONTAL LATERAL (7.7.2.2.1)
+#    bacia + horizontal transversal à bacia   → FUNDO (7.7.2.2.2 / .3)
+#    lavatório + horizontal / vertical        → 7.8.1 d / 7.8.1 e
+# 3) Régua de cada tipo (adulto | infantil, Figuras 106 a 111):
+#    lateral e fundo: eixo a 0,75 m (0,60 infantil), comprimento ≥ 0,80 m
+#    fundo com CAIXA ACOPLADA: eixo até 0,89 m (A1; 0,72 infantil) e
+#        ≥ 0,04 m acima da tampa da caixa
+#    vertical: comprimento ≥ 0,70 m, fixação inferior 0,10 m acima do eixo
+#        da barra horizontal lateral
+#    lavatório horizontal: FACE SUPERIOR a 0,78–0,80 m
+#    lavatório vertical: início a 0,90 m, comprimento ≥ 0,40 m
+# 4) Três faixas (decisão do projeto): dentro da norma → Conforme;
+#    até ±2 cm além → Parcial (verificar na obra/projeto); além disso →
+#    Não Conforme. Barra sem geometria/associação → Indeterminado.
 
-BARRA_TOL_PARCIAL = 0.05
+TOL_BARRA_CONF = 0.01      # ruído de modelagem (arredondamento da família)
+TOL_BARRA_PARC = 0.02      # faixa "Parcial": validar manualmente
+BARRA_REF = {   # (adulto, infantil)
+    "A": (0.75, 0.60),       # eixo das barras lateral e de fundo
+    "A1": (0.89, 0.72),      # máximo da barra de fundo com caixa acoplada
+}
+BARRA_COMP_HORIZ = 0.80
+BARRA_COMP_VERT_BACIA = 0.70
+BARRA_ACIMA_HORIZ = 0.10
+BARRA_FOLGA_TAMPA = 0.04
+LAV_BARRA_TOPO = (0.78, 0.80)
+LAV_BARRA_VERT_BASE = 0.90
+LAV_BARRA_VERT_COMP = 0.40
+BARRA_DIST_ASSOC = 1.0
 
 
-def _v_barras(barras):
+def _faixa(valor, vmin, vmax):
+    """Classifica um valor contra [vmin, vmax] nas 3 faixas do projeto."""
+    if vmin - TOL_BARRA_CONF <= valor <= vmax + TOL_BARRA_CONF:
+        return "Conforme"
+    if vmin - TOL_BARRA_PARC <= valor <= vmax + TOL_BARRA_PARC:
+        return "Parcial"
+    return "Não Conforme"
+
+
+def _pior(*sts):
+    ordem = ["Não Conforme", "Indeterminado", "Parcial", "Conforme"]
+    return min(sts, key=ordem.index)
+
+
+def _m(v):
+    return f"{v:.3f} m".replace(".", ",")
+
+
+def _v_barras_sem_geometria(barras):
+    """Fallback (sem ficha geométrica): régua única 0,70–0,80 m, como antes."""
     linhas = []
     h_min, h_max = BARRA_ALT_REF - BARRA_TOL, BARRA_ALT_REF + BARRA_TOL
     exig = f"Horizontal: {h_min:.2f}–{h_max:.2f} m (eixo)"
     for b in barras:
         h, fonte = _altura_equip(b)
-
         if h is None:
-            linhas.append(_linha(b, "7.6-7.8", "—", exig, "Indeterminado",
-                                 fonte, "Sem altura disponível — verificar in loco."))
+            linhas.append(_linha(b, "7.6-7.8", "—", exig, "Indeterminado", fonte,
+                                 "Sem altura disponível — verificar in loco."))
             continue
+        st_ = _faixa(h, h_min, h_max)
+        if st_ == "Não Conforme":
+            st_ = "Indeterminado"   # sem saber o tipo da barra, não dá para reprovar
+        msg = "" if st_ == "Conforme" else (f"Altura {h:.3f} m — sem geometria para identificar o tipo "
+                                            "da barra (lateral/fundo/vertical/lavatório); verificar in loco.")
+        linhas.append(_linha(b, "7.6-7.8", f"eixo={h:.3f} m", exig, st_, fonte, msg))
+    return linhas
 
-        if b.get("barra_vertical"):
-            linhas.append(_linha(b, "7.6-7.8", f"base={h:.3f} m (vertical)", exig, "Indeterminado", fonte,
-                                 f"Barra vertical com base a {h:.3f} m — posição depende da barra "
-                                 "horizontal vizinha; verificar manualmente."))
+
+def _v_barras(barras, bacias=None, lavatorios=None):
+    pecas = [("bacia", p) for p in (bacias or []) if p.get("geo")] + \
+            [("lavatório", p) for p in (lavatorios or []) if p.get("geo")]
+    if not pecas or not any(b.get("geo") for b in barras):
+        return _v_barras_sem_geometria(barras)
+
+    # 1) associação barra → peça mais próxima
+    assoc = []
+    for b in barras:
+        g = b.get("geo")
+        if not g:
+            assoc.append((b, None, None)); continue
+        dists = [(dist_bbox(g["bbox"], p["geo"]["bbox"]), tipo, p) for tipo, p in pecas]
+        d, tipo, p = min(dists, key=lambda t: t[0])
+        assoc.append((b, (tipo, p) if d <= BARRA_DIST_ASSOC else None, d))
+
+    # eixo das barras horizontais LATERAIS de cada bacia (referência da vertical)
+    def _tipo_barra_bacia(g, bacia):
+        if g["vertical"]:
+            return "vertical"
+        return "lateral" if g["eixo_maior"] == bacia["geo"]["eixo_planta"] else "fundo"
+
+    ref_lateral = {}
+    for b, pa, _ in assoc:
+        if pa and pa[0] == "bacia" and _tipo_barra_bacia(b["geo"], pa[1]) == "lateral":
+            ref_lateral.setdefault(pa[1]["GlobalId"], []).append(b["geo"]["z_eixo"])
+
+    linhas = []
+    for b, pa, dist in assoc:
+        g = b.get("geo")
+        fonte = "geometria_bbox_barra"
+        if g is None:
+            linhas.append(_linha(b, "7.6-7.8", "—", "—", "Indeterminado", "nao_encontrado",
+                                 "Barra sem geometria — verificar in loco."))
             continue
+        if pa is None:
+            linhas.append(_linha(b, "7.6-7.8", f"eixo={g['z_eixo']:.3f} m", "—", "Indeterminado", fonte,
+                                 f"Nenhuma bacia/lavatório a menos de {BARRA_DIST_ASSOC:.1f} m — tipo da barra "
+                                 "não identificado; verificar in loco."))
+            continue
+        tipo_peca, peca = pa
+        infantil = "infantil" in (str(peca.get("Name")) + " " + str(b.get("Name"))).lower()
+        k = 1 if infantil else 0
+        publico = " (infantil)" if infantil else ""
+        comp = g["comprimento"]
 
-        if h_min <= h <= h_max:
-            status, msg = "Conforme", ""
-        elif (h_min - BARRA_TOL_PARCIAL) <= h <= (h_max + BARRA_TOL_PARCIAL):
-            status = "Parcial"
-            msg = f"Altura {h:.3f} m próxima do limite ({h_min:.2f}–{h_max:.2f} m) — validação manual recomendada."
-        else:
-            status = "Indeterminado"
-            msg = (f"Altura {h:.3f} m fora da faixa de barra horizontal junto à bacia — pode ser barra "
-                   "de lavatório/porta ou erro de modelagem; verificar in loco.")
-        linhas.append(_linha(b, "7.6-7.8", f"eixo={h:.3f} m", exig, status, fonte, msg))
+        if tipo_peca == "bacia":
+            tipo = _tipo_barra_bacia(g, peca)
+            caixa = "acoplada" in str(peca.get("Name", "")).lower()
+            if tipo == "lateral":
+                A = BARRA_REF["A"][k]
+                st_h = _faixa(g["z_eixo"], A, A)
+                st_c = "Conforme" if comp >= BARRA_COMP_HORIZ - TOL_BARRA_CONF else "Não Conforme"
+                st_ = _pior(st_h, st_c)
+                exig = f"7.7.2.2.1 horizontal lateral{publico}: eixo {A:.2f} m; comp. ≥ {BARRA_COMP_HORIZ:.2f} m"
+                medido = f"lateral | eixo={_m(g['z_eixo'])} | comp={_m(comp)}"
+                msg = []
+                if st_h != "Conforme": msg.append(f"eixo {_m(g['z_eixo'])} (exigido {A:.2f} m)")
+                if st_c != "Conforme": msg.append(f"comprimento {_m(comp)} < {BARRA_COMP_HORIZ:.2f} m")
+            elif tipo == "fundo":
+                A = BARRA_REF["A"][k]
+                if caixa:
+                    A1 = BARRA_REF["A1"][k]
+                    st_h = _faixa(g["z_eixo"], A, A1)
+                    tampa = peca["geo"]["z_max"]
+                    folga = g["z_miolo_min"] - tampa
+                    st_t = "Conforme" if folga >= BARRA_FOLGA_TAMPA - TOL_BARRA_CONF else \
+                           ("Parcial" if folga >= BARRA_FOLGA_TAMPA - TOL_BARRA_PARC else "Não Conforme")
+                    exig = (f"7.7.2.2.3 fundo c/ caixa acoplada{publico}: eixo {A:.2f}–{A1:.2f} m; "
+                            f"≥ {BARRA_FOLGA_TAMPA:.2f} m acima da tampa; comp. ≥ {BARRA_COMP_HORIZ:.2f} m")
+                    medido = f"fundo | eixo={_m(g['z_eixo'])} | {_m(folga)} acima da tampa | comp={_m(comp)}"
+                else:
+                    st_h = _faixa(g["z_eixo"], A, A)
+                    st_t, folga = "Conforme", None
+                    exig = f"7.7.2.2.2 fundo{publico}: eixo {A:.2f} m; comp. ≥ {BARRA_COMP_HORIZ:.2f} m"
+                    medido = f"fundo | eixo={_m(g['z_eixo'])} | comp={_m(comp)}"
+                st_c = "Conforme" if comp >= BARRA_COMP_HORIZ - TOL_BARRA_CONF else "Não Conforme"
+                st_ = _pior(st_h, st_t, st_c)
+                msg = []
+                if st_h != "Conforme": msg.append(f"eixo {_m(g['z_eixo'])} fora da faixa")
+                if st_t != "Conforme": msg.append(f"só {_m(folga)} acima da tampa (mín. {BARRA_FOLGA_TAMPA:.2f} m)")
+                if st_c != "Conforme": msg.append(f"comprimento {_m(comp)} < {BARRA_COMP_HORIZ:.2f} m")
+            else:  # vertical
+                refs = ref_lateral.get(peca["GlobalId"])
+                st_c = "Conforme" if comp >= BARRA_COMP_VERT_BACIA - TOL_BARRA_CONF else "Não Conforme"
+                if refs:
+                    alvo = min(refs) + BARRA_ACIMA_HORIZ
+                    st_b = _faixa(g["z_base_eixo"], alvo, alvo)
+                    exig = (f"7.7.2.2.1 vertical{publico}: comp. ≥ {BARRA_COMP_VERT_BACIA:.2f} m; "
+                            f"fixação inferior {BARRA_ACIMA_HORIZ:.2f} m acima da horizontal ({alvo:.2f} m)")
+                else:
+                    alvo = None
+                    st_b = "Indeterminado"
+                    exig = (f"7.7.2.2.1 vertical{publico}: comp. ≥ {BARRA_COMP_VERT_BACIA:.2f} m; "
+                            f"{BARRA_ACIMA_HORIZ:.2f} m acima da barra horizontal")
+                st_ = _pior(st_b, st_c)
+                medido = f"vertical | fixação inferior={_m(g['z_base_eixo'])} | comp={_m(comp)}"
+                msg = []
+                if st_b == "Indeterminado": msg.append("sem barra horizontal lateral identificada para referência")
+                elif st_b != "Conforme": msg.append(f"fixação inferior {_m(g['z_base_eixo'])} (exigido {alvo:.2f} m)")
+                if st_c != "Conforme": msg.append(f"comprimento {_m(comp)} < {BARRA_COMP_VERT_BACIA:.2f} m")
+        else:  # lavatório (7.8.1)
+            if g["vertical"]:
+                base = g["z_min"]
+                st_b = _faixa(base, LAV_BARRA_VERT_BASE, LAV_BARRA_VERT_BASE)
+                st_c = "Conforme" if comp >= LAV_BARRA_VERT_COMP - TOL_BARRA_CONF else "Não Conforme"
+                st_ = _pior(st_b, st_c)
+                exig = f"7.8.1 e) lavatório vertical: início a {LAV_BARRA_VERT_BASE:.2f} m; comp. ≥ {LAV_BARRA_VERT_COMP:.2f} m"
+                medido = f"lavatório vertical | início={_m(base)} | comp={_m(comp)}"
+                msg = []
+                if st_b != "Conforme": msg.append(f"início {_m(base)} (exigido {LAV_BARRA_VERT_BASE:.2f} m)")
+                if st_c != "Conforme": msg.append(f"comprimento {_m(comp)} < {LAV_BARRA_VERT_COMP:.2f} m")
+            else:
+                t0, t1 = LAV_BARRA_TOPO
+                st_ = _faixa(g["z_topo"], t0, t1)
+                exig = f"7.8.1 d) lavatório horizontal: face superior a {t0:.2f}–{t1:.2f} m"
+                medido = f"lavatório horizontal | face superior={_m(g['z_topo'])}"
+                msg = [] if st_ == "Conforme" else [
+                    f"face superior {_m(g['z_topo'])} — "
+                    f"{abs(g['z_topo'] - (t1 if g['z_topo'] > t1 else t0)) * 100:.1f} cm ".replace(".", ",")
+                    f"{'acima' if g['z_topo'] > t1 else 'abaixo'} do limite"]
+
+        texto = ""
+        if msg:
+            texto = "; ".join(msg) + "."
+            if st_ == "Parcial":
+                texto += " Dentro de ±2 cm do limite — confirmar no projeto/obra."
+        linhas.append(_linha(b, "7.6-7.8", medido, exig, st_, fonte, texto))
     return linhas
 # └─ fim PONTO 4 ──────────────────────────────────────────────────────────────
 
@@ -623,7 +789,7 @@ def gerar_verificacoes(elementos: dict) -> list[dict]:
     linhas += _v_giro(c.get("espacos", []))
     linhas += _v_bacias(c.get("bacias", []))
     linhas += _v_lavatorios(c.get("lavatorios", []))
-    linhas += _v_barras(c.get("barras", []))
+    linhas += _v_barras(c.get("barras", []), c.get("bacias", []), c.get("lavatorios", []))
     linhas += _v_macaneta(c.get("portas", []))
     linhas += _v_desniveis(c.get("desniveis", []), c.get("chanfros", []), c.get("diag_lajes", []))
     return linhas

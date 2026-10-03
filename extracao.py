@@ -9,7 +9,7 @@ from pathlib import Path
 from geometria_nbr import (poligono_planta, ambientes_da_porta, analisar_laje,
                            triangulos_topo, desnivel_na_porta,
                            desniveis_entre_lajes, corrimaos_da_rampa,
-                           dist_ponto_poligono)
+                           dist_ponto_poligono, descrever_elemento)
 
 
 def _criar_shape(geom, settings, el):
@@ -964,6 +964,20 @@ def extract_ifc_elements(ifc_path: str) -> dict:
                 # barra horizontal: altura do eixo da barra
                 d["altura_estimada_m"] = g["zcentro"]
                 d["fonte_altura"] = "geometria_bbox_eixo_barra_horizontal"
+
+    # Ficha geométrica de bacias, lavatórios e barras (sólido "Body", cotas
+    # relativas ao pavimento). É o que permite saber A QUE PEÇA cada barra
+    # serve e aplicar a regra certa: 7.7.2.2 (bacia: lateral, fundo, vertical)
+    # ou 7.8.1 (lavatório) — em vez de uma régua única de 0,75 m para todas.
+    for _lista in (bacias, lavatórios, barras):
+        for d in _lista:
+            try:
+                _el = ifc.by_guid(d["GlobalId"])
+                _v, _f = _malha(_el)
+                if _v is not None:
+                    d["geo"] = descrever_elemento(_v, _cota_pavimento(_el))
+            except Exception:
+                pass
 
     resultado["elementos"]["Bacias"]    = bacias[:20]
     resultado["elementos"]["Lavatorios"] = lavatórios[:20]

@@ -494,3 +494,58 @@ def corrimaos_da_rampa(info_rampa, corrimaos, dist_max=0.40, tol_alt=0.05):
             "tem_092": any(abs(h - 0.92) <= tol_alt for h in alturas + [topo]),
         })
     return saida
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 7.7.2.2 / 7.8.1 — Barras de apoio: forma, orientação e medidas
+# ══════════════════════════════════════════════════════════════════════════════
+
+def descrever_elemento(verts, base_z=0.0, margem=0.06):
+    """
+    "Ficha técnica" geométrica de uma peça (barra, bacia, lavatório), com
+    cotas RELATIVAS ao piso do pavimento (base_z).
+
+    Para barras, separa o "miolo" do tubo das pontas: nas pontas ficam as
+    flanges de fixação (Ø ~8 cm) e as curvas, que distorcem a altura.
+    Analogia: medir a altura de um corrimão no meio do vão, não no suporte.
+
+    Devolve dict com:
+      bbox (x0, x1, y0, y1), z_min, z_max, ext (dx, dy, dz), centro_xy,
+      eixo_maior ("x"/"y"/"z"), comprimento, vertical (bool),
+      z_eixo      → centro do tubo no miolo (barras horizontais retas),
+      z_topo      → face superior do tubo no miolo (alças/barras de lavatório),
+      z_base_eixo → para barras verticais: centro da fixação inferior
+                    (z_min + raio da flange).
+    """
+    v = np.asarray(verts, dtype=float).reshape(-1, 3).copy()
+    v[:, 2] -= base_z
+    mn, mx = v.min(0), v.max(0)
+    ext = mx - mn
+    ax = int(np.argmax(ext))
+    L = float(ext[ax])
+    lo, hi = mn[ax], mx[ax]
+    m = margem if L > 3 * margem else L * 0.2
+    miolo = v[(v[:, ax] > lo + m) & (v[:, ax] < hi - m)]
+    if len(miolo) < 3:
+        miolo = v
+    vertical = ax == 2
+    raio_flange = float(min(ext[0], ext[1])) / 2 if vertical else float(ext[2]) / 2
+    return {
+        "bbox": [round(float(mn[0]), 3), round(float(mx[0]), 3), round(float(mn[1]), 3), round(float(mx[1]), 3)],
+        "z_min": round(float(mn[2]), 3), "z_max": round(float(mx[2]), 3),
+        "ext": [round(float(e), 3) for e in ext],
+        "centro_xy": [round(float((mn[0] + mx[0]) / 2), 3), round(float((mn[1] + mx[1]) / 2), 3)],
+        "eixo_maior": "xyz"[ax], "comprimento": round(L, 3), "vertical": bool(vertical),
+        "eixo_planta": "x" if ext[0] >= ext[1] else "y",
+        "z_eixo": round(float((miolo[:, 2].min() + miolo[:, 2].max()) / 2), 3),
+        "z_topo": round(float(miolo[:, 2].max()), 3),
+        "z_miolo_min": round(float(miolo[:, 2].min()), 3),
+        "z_base_eixo": round(float(mn[2]) + raio_flange, 3) if vertical else None,
+    }
+
+
+def dist_bbox(a, b):
+    """Distância em planta entre duas caixas [x0, x1, y0, y1] (0 se encostam)."""
+    dx = max(0.0, a[0] - b[1], b[0] - a[1])
+    dy = max(0.0, a[2] - b[3], b[2] - a[3])
+    return float((dx * dx + dy * dy) ** 0.5)
