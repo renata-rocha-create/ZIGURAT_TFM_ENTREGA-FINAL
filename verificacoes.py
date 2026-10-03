@@ -399,7 +399,9 @@ def _v_desniveis(desniveis, chanfros):
         onde = "porta" if x.get("tipo") == "porta" else "junta de lajes"
         if mm is None:
             linhas.append(_linha(el, "6.3.4", "—", exig, "Indeterminado", "geometria_lajes",
-                                 f"Sem piso modelado de um dos lados da {onde}."))
+                                 f"Sem piso modelado de um dos lados da {onde} "
+                                 f"(cotas lidas: {x.get('cota_lado_1_m')} / {x.get('cota_lado_2_m')} m; "
+                                 f"pontos testados: {x.get('sondas_xy')}). Verificar se há laje dos dois lados."))
             continue
         medido = f"{mm:.1f} mm ({x.get('cota_lado_1_m')} / {x.get('cota_lado_2_m')} m)"
         if mm <= DESNIVEL_SEM_TRAT_MM + TOL_MODELAGEM_MM:

@@ -161,7 +161,7 @@ def cota_topo(info_laje, x, y):
 # 4.6.6 — Quais ambientes uma porta conecta
 # ══════════════════════════════════════════════════════════════════════════════
 
-def sondas_porta(verts_porta, folga=0.15):
+def sondas_porta(verts_porta, folga=0.15):   # mantida por compatibilidade
     """
     Dois pontos em planta, um de cada lado da porta.
 
@@ -181,27 +181,60 @@ def sondas_porta(verts_porta, folga=0.15):
     return (cx, cy - dy / 2 - folga), (cx, cy + dy / 2 + folga), (cx, cy)
 
 
-def ambientes_da_porta(verts_porta, poligonos, folga=0.15, dist_max=0.30):
+def candidatos_sondas(verts_porta, folgas=(0.15, 0.30, 0.50)):
     """
-    Descobre os ambientes dos DOIS lados de uma porta: testa em qual polígono
-    de ambiente cai cada sonda (ver sondas_porta). Se algum lado não cair em
-    nenhum ambiente (área externa, parede não ortogonal), usa como reforço os
-    ambientes a até `dist_max` do centro da porta.
+    Pares de sondas em ordem de preferência: primeiro no eixo "fino" da
+    caixa da porta (o certo quando a geometria é confiável), com passos
+    crescentes; depois no outro eixo. Assim, se a caixa vier girada 90° (ex:
+    porta com geometria mapeada interpretada diferente em outra versão do
+    ifcopenshell), o par certo ainda é encontrado.
+    """
+    v = np.asarray(verts_porta, dtype=float).reshape(-1, 3)
+    xmin, ymin = v[:, 0].min(), v[:, 1].min()
+    xmax, ymax = v[:, 0].max(), v[:, 1].max()
+    cx, cy = (xmin + xmax) / 2, (ymin + ymax) / 2
+    dx, dy = xmax - xmin, ymax - ymin
+    eixos = ["x", "y"] if dx <= dy else ["y", "x"]
+    pares = []
+    for eixo in eixos:
+        for f in folgas:
+            if eixo == "x":
+                pares.append(((cx - dx / 2 - f, cy), (cx + dx / 2 + f, cy)))
+            else:
+                pares.append(((cx, cy - dy / 2 - f), (cx, cy + dy / 2 + f)))
+    return pares, (cx, cy)
+
+
+def ambientes_da_porta(verts_porta, poligonos, dist_max=0.30):
+    """
+    Descobre os ambientes dos DOIS lados de uma porta: testa pares de sondas
+    (ver candidatos_sondas) e fica com o primeiro que cai em DOIS ambientes
+    diferentes. Se nenhum par conseguir (porta para área externa), usa o melhor
+    par encontrado + ambientes a até `dist_max` do centro da porta.
 
     poligonos: dict {chave: polígono xy}. Devolve lista de chaves.
     """
-    s1, s2, centro = sondas_porta(verts_porta, folga)
-    achados = []
-    for s in (s1, s2):
+    pares, centro = candidatos_sondas(verts_porta)
+
+    def _amb(p):
         for k, poly in poligonos.items():
-            if len(poly) >= 3 and ponto_no_poligono(s, poly) and k not in achados:
-                achados.append(k)
-                break
-    if len(achados) < 2:
-        for k, poly in poligonos.items():
-            if k not in achados and len(poly) >= 3 and dist_ponto_poligono(centro, poly) <= dist_max:
-                achados.append(k)
-    return achados
+            if len(poly) >= 3 and ponto_no_poligono(p, poly):
+                return k
+        return None
+
+    melhor = []
+    for s1, s2 in pares:
+        a1, a2 = _amb(s1), _amb(s2)
+        achados = [a for a in (a1, a2) if a is not None]
+        achados = list(dict.fromkeys(achados))
+        if len(achados) == 2:
+            return achados
+        if len(achados) > len(melhor):
+            melhor = achados
+    for k, poly in poligonos.items():
+        if k not in melhor and len(poly) >= 3 and dist_ponto_poligono(centro, poly) <= dist_max:
+            melhor.append(k)
+    return melhor
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -252,26 +285,33 @@ def cota_no_ponto(tris, x, y, tol=1e-6):
     return melhor
 
 
-def desnivel_na_porta(verts_porta, lajes_tris, folga=0.15):
+def desnivel_na_porta(verts_porta, lajes_tris):
     """
     Desnível de piso ATRAVÉS de uma porta (6.3.4): lê a cota do piso acabado
-    um passo antes e um passo depois do vão.
+    um passo antes e um passo depois do vão. Testa os pares de sondas de
+    candidatos_sondas() e usa o primeiro com piso dos DOIS lados.
     lajes_tris: lista de arrays de triângulos de topo (uma por laje).
-    Devolve dict {"z_1", "z_2", "desnivel_mm"} ou None se faltar piso de um lado.
+    Devolve dict {"z_1", "z_2", "desnivel_mm", "sondas"}; desnivel_mm=None
+    se nenhum par encontrou piso dos dois lados.
     """
-    s1, s2, _ = sondas_porta(verts_porta, folga)
     def _z(p):
         zs = [cota_no_ponto(t, *p) for t in lajes_tris]
         zs = [z for z in zs if z is not None]
         return max(zs) if zs else None
-    z1, z2 = _z(s1), _z(s2)
-    sondas = [[round(float(c), 3) for c in s] for s in (s1, s2)]
-    if z1 is None or z2 is None:
-        return {"z_1": None if z1 is None else round(float(z1), 4),
-                "z_2": None if z2 is None else round(float(z2), 4),
-                "desnivel_mm": None, "sondas": sondas}
-    return {"z_1": round(float(z1), 4), "z_2": round(float(z2), 4),
-            "desnivel_mm": round(abs(float(z1) - float(z2)) * 1000, 1), "sondas": sondas}
+
+    pares, _ = candidatos_sondas(verts_porta)
+    parcial = None
+    for s1, s2 in pares:
+        z1, z2 = _z(s1), _z(s2)
+        sondas = [[round(float(c), 3) for c in s] for s in (s1, s2)]
+        if z1 is not None and z2 is not None:
+            return {"z_1": round(float(z1), 4) + 0.0, "z_2": round(float(z2), 4) + 0.0,
+                    "desnivel_mm": round(abs(float(z1) - float(z2)) * 1000, 1), "sondas": sondas}
+        if parcial is None:
+            parcial = {"z_1": None if z1 is None else round(float(z1), 4),
+                       "z_2": None if z2 is None else round(float(z2), 4),
+                       "desnivel_mm": None, "sondas": sondas}
+    return parcial
 
 
 def _partes_planta(verts, passo=0.01):

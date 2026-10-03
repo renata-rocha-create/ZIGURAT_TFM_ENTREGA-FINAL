@@ -195,6 +195,23 @@ def extract_ifc_elements(ifc_path: str) -> dict:
                 _cache_malha[gid] = (None, None)
         return _cache_malha[gid]
 
+    def _malha_vao(porta):
+        """
+        Geometria do VÃO da porta (IfcOpeningElement que ela preenche) — uma
+        caixa simples do tamanho da parede. Mais confiável que a geometria da
+        própria porta, que no Revit costuma vir "mapeada" (bloco reutilizado
+        com rotação) e pode sair girada dependendo da versão do ifcopenshell.
+        Sem vão → usa a geometria da porta.
+        """
+        try:
+            for rel in getattr(porta, "FillsVoids", None) or []:
+                v, f = _malha(rel.RelatingOpeningElement)
+                if v is not None:
+                    return v, f
+        except Exception:
+            pass
+        return _malha(porta)
+
     # Polígono em planta de cada IfcSpace — base para saber de que lado de
     # cada porta fica cada ambiente (4.6.6) e para rotular desníveis (6.3.4).
     _poligonos_espacos = {}   # GlobalId → (nome legível, polígono xy)
@@ -284,7 +301,7 @@ def extract_ifc_elements(ifc_path: str) -> dict:
         # geométrico: quais ambientes estão dos dois lados do vão. Se um deles
         # for PCD/PNE → a porta entra no item. O nome da família NÃO decide.
         ambientes = []
-        _v, _f = _malha(el)
+        _v, _f = _malha_vao(el)
         if _v is not None and _poligonos_espacos:
             try:
                 chaves = ambientes_da_porta(_v, {k: pol for k, (nm, pol) in _poligonos_espacos.items()})
@@ -992,7 +1009,7 @@ def extract_ifc_elements(ifc_path: str) -> dict:
     if _tris:
         for p in portas:
             try:
-                _v, _f = _malha(ifc.by_guid(p["GlobalId"]))
+                _v, _f = _malha_vao(ifc.by_guid(p["GlobalId"]))
                 if _v is None:
                     continue
                 r = desnivel_na_porta(_v, _tris)
@@ -1004,7 +1021,7 @@ def extract_ifc_elements(ifc_path: str) -> dict:
                 "tipo_ifc": "IfcDoor", "pavimento": p.get("pavimento"),
                 "trecho": " ↔ ".join(amb) if amb else "ambientes não identificados",
                 "cota_lado_1_m": r["z_1"], "cota_lado_2_m": r["z_2"],
-                "desnivel_mm": r["desnivel_mm"],
+                "desnivel_mm": r["desnivel_mm"], "sondas_xy": r["sondas"],
             })
     def _rotulo_laje(gid, nome):
         if gid in _info_rampas:
