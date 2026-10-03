@@ -742,10 +742,10 @@ def _v_barras(barras, bacias=None, lavatorios=None):
                 st_ = _faixa(g["z_topo"], t0, t1)
                 exig = f"7.8.1 d) lavatório horizontal: face superior a {t0:.2f}–{t1:.2f} m"
                 medido = f"lavatório horizontal | face superior={_m(g['z_topo'])}"
+                desvio_cm = f"{abs(g['z_topo'] - (t1 if g['z_topo'] > t1 else t0)) * 100:.1f}".replace(".", ",")
+                lado = "acima" if g["z_topo"] > t1 else "abaixo"
                 msg = [] if st_ == "Conforme" else [
-                    f"face superior {_m(g['z_topo'])} — "
-                    f"{abs(g['z_topo'] - (t1 if g['z_topo'] > t1 else t0)) * 100:.1f} cm ".replace(".", ",")
-                    f"{'acima' if g['z_topo'] > t1 else 'abaixo'} do limite"]
+                    f"face superior {_m(g['z_topo'])} — {desvio_cm} cm {lado} do limite"]
 
         texto = ""
         if msg:
