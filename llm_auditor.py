@@ -42,7 +42,10 @@ def _resumo_elementos(elementos: dict) -> str:
             ow   = p.get("OverallWidth_m")  or p.get("OverallWidth")
             h_str = f"{oh:.3f}m" if oh else "N/D"
             w_str = f"{ow:.3f}m" if ow else "N/D"
-            linhas.append(f"  [{gid}] {nome} | Altura={h_str} | Largura={w_str}")
+            amb  = p.get("ambientes_adjacentes")
+            pne  = "SIM" if p.get("pne_pcd_confirmado") else "não"
+            linhas.append(f"  [{gid}] {nome} | Altura={h_str} | Largura={w_str} | "
+                          f"Ambientes: {' ↔ '.join(amb) if amb else 'N/D'} | Porta de ambiente PNE/PCD (item 4.6.6)? {pne}")
         if len(portas) > 15:
             linhas.append(f"  ... +{len(portas)-15} portas na amostra (ver estatística completa abaixo)")
 
@@ -106,6 +109,13 @@ def _resumo_elementos(elementos: dict) -> str:
             inc   = r.get("inclinacao_pct","?")
             fonte = r.get("fonte_dados_rampa","?")
             linhas.append(f"  [{gid}] {nome} | Rise={rise}m | Run={run_}m | Inclinação={inc}% | Fonte={fonte}")
+            if r.get("deteccao_rampa"):
+                linhas.append(f"    Detectada como rampa por: {r['deteccao_rampa']} (IfcSlab — não há IfcRamp no modelo)")
+            for c in r.get("corrimaos_associados", []) or []:
+                linhas.append(
+                    f"    Corrimão ao lado: [{c.get('id')}] lado {c.get('lado')} | topo a {c.get('altura_topo_m')}m da superfície da rampa | "
+                    f"níveis {c.get('alturas_m')} | 0,70m? {'SIM' if c.get('tem_070') else 'não'} | 0,92m? {'SIM' if c.get('tem_092') else 'não'} | "
+                    f"acompanha a inclinação? {'SIM' if c.get('paralelo_a_rampa') else 'NÃO (varia ' + str(c.get('variacao_altura_m')) + 'm)'}")
             if fonte and "ESTIMATIVA" in fonte:
                 linhas.append(f"    ⚠️ Rise/Run estimados por bounding box geométrico (Pset não trouxe OverallRise/Run) — conferir manualmente.")
             slope_bruto = r.get("Slope_pset_bruto")
@@ -247,6 +257,16 @@ def _resumo_elementos(elementos: dict) -> str:
         h  = j.get("OverallHeight_m","N/D")
         w  = j.get("OverallWidth_m","N/D")
         linhas.append(f"  [{gid}] {nome} | SillHeight={sh} | H={h}m | W={w}m")
+
+    # ── DESNÍVEIS DE PISO (6.3.4) ─────────────────────────────────────────────
+    desn = elems.get("Desniveis_pisos", [])
+    linhas.append(f"\n## DESNÍVEIS DE PISO (item 6.3.4) — {len(desn)} pontos de passagem medidos na geometria")
+    linhas.append("  Regra NBR 9050 6.3.4: ≤5mm dispensa tratamento | 5–20mm exige chanfro 1:2 | >20mm = degrau")
+    for x in desn[:15]:
+        linhas.append(f"  [{x.get('GlobalId')}] {x.get('tipo')}: {x.get('trecho')} | cotas {x.get('cota_lado_1_m')}m / "
+                      f"{x.get('cota_lado_2_m')}m | desnível={x.get('desnivel_mm')}mm")
+    chf = elems.get("Chanfros", [])
+    linhas.append(f"  Chanfros/soleiras rampadas modelados: {len(chf)}")
 
     # ── PAREDES (fallback corredores) ─────────────────────────────────────────
     paredes = elems.get("IfcWall_amostra", [])

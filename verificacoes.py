@@ -103,6 +103,10 @@ JANELA_PEITORIL_MIN = 1.20     # 6.11.3
 BACIA_ALT_MIN, BACIA_ALT_MAX = 0.43, 0.45   # 7.7.2.1 (RIM, não assembly)
 BARRA_ALT_REF, BARRA_TOL = 0.75, 0.05       # 7.6–7.8 frontal (faixa 0,70–0,80 m)
 DESNIVEL_CORRIMAO = 0.19       # 5.4.3
+RAMPA_I_MIN = 5.0              # 6.6 — abaixo de 5% a NBR não considera a superfície uma rampa
+DESNIVEL_SEM_TRAT_MM = 5.0     # 6.3.4 — até 5 mm dispensa tratamento especial
+DESNIVEL_CHANFRO_MM = 20.0     # 6.3.4 — de 5 a 20 mm exige chanfro 1:2 (50%)
+TOL_MODELAGEM_MM = 0.5         # 6.3.4 — arredondamento de cotas no modelo (0,005 vira 4,9999…)
 
 TERMOS_LAV_CONFORME = ["suspenso", "sem coluna", "embutir", "semiencaixe", "encaixe"]
 TERMOS_LAV_NAO_CONF = ["com coluna", "pedestal", "coluna suspensa"]
@@ -113,7 +117,7 @@ CATEGORIAS = {
     "6.6": "Rampas", "6.11.1": "Corredores", "6.11.2": "Portas",
     "6.11.3": "Janelas", "5.4.3": "Corrimão", "7.5": "Circulação sanitários",
     "7.7.2.1": "Bacia sanitária", "7.8": "Lavatório", "7.6-7.8": "Barras de apoio",
-    "4.6.6": "Maçaneta",
+    "4.6.6": "Maçaneta", "6.3.4": "Desníveis de piso",
 }
 
 # Itens que dependem de texto/nome (classificação por palavra-chave)
@@ -195,7 +199,9 @@ def _v_macaneta(portas):
     linhas = []
     for p in portas:
         if not p.get("pne_pcd_confirmado"):
-            continue  # escopo do projeto: só portas de sanitário PNE/PCD
+            continue  # escopo: só portas que dão acesso a ambiente PNE/PCD
+        amb = p.get("ambientes_adjacentes")
+        onde = f" Porta entre: {' ↔ '.join(amb)}." if amb else ""
         texto = " ".join(str(p.get(k) or "") for k in ("Name", "ObjectType", "Description")).lower()
         if any(t in texto for t in TERMOS_MACANETA_NOK):
             st_, msg = "Não Conforme", "Nome indica maçaneta esférica/giratória."
@@ -203,7 +209,7 @@ def _v_macaneta(portas):
             st_, msg = "Conforme", "Nome indica maçaneta tipo alavanca."
         else:
             st_, msg = "Indeterminado", "Tipo de maçaneta não informado no nome/descrição."
-        linhas.append(_linha(p, "4.6.6", "(texto)", "Maçaneta tipo alavanca", st_, "texto_nome", msg))
+        linhas.append(_linha(p, "4.6.6", "(texto)", "Maçaneta tipo alavanca", st_, "texto_nome", msg + onde))
     return linhas
 
 
@@ -235,73 +241,179 @@ def _detectar_rampa_fallback(elemento):
 
 
 def _v_rampas(rampas):
+    """
+    6.6 — inclinação por faixa de desnível.
+
+    Abaixo de 5% a NBR 9050 não considera a superfície uma rampa (é piso
+    inclinado de rota acessível): registra como Conforme, sem exigir os
+    limites da tabela, mas avisa quando está "colado" no limite (≥ 4,5%) —
+    um arredondamento no projeto pode virar 5% na obra.
+    """
     linhas = []
     for r in rampas:
-        # Tenta fallback primeiro se não for IfcRamp explícito
         tipo_ifc = r.get("tipo_ifc", "")
-        is_explicit_ramp = "IfcRamp" in tipo_ifc or "IfcRampFlight" in tipo_ifc
-
+        is_explicit_ramp = "IfcRamp" in tipo_ifc
         rise, incl = _num(r.get("OverallRise_m")), _num(r.get("inclinacao_pct"))
         fonte = r.get("fonte_dados_rampa", "nao_encontrado")
 
-        # Se não é IfcRamp explícito, testa fallback
         if not is_explicit_ramp:
             rise_fb, incl_fb, eh_rampa_fb = _detectar_rampa_fallback(r)
             if not eh_rampa_fb:
-                # Não passa no critério fallback, pula
                 continue
-            # Passa: usa os valores do fallback
             rise, incl = rise_fb, incl_fb
-            fonte = "geometria_fallback_inclinacao"
+        como = r.get("deteccao_rampa")
+        marker = f" [fallback IfcSlab — {como}]" if como else (" [fallback: slab inclinado]" if "fallback" in fonte else "")
 
         if rise is None or incl is None:
             linhas.append(_linha(r, "6.6", "—", "Inclinação por faixa de desnível", "Indeterminado",
-                                 fonte, "Sem OverallRise/OverallRun nem geometria utilizável."))
+                                 fonte, "Sem OverallRise/OverallRun nem geometria utilizável." + marker))
+            continue
+
+        medido = f"desnível={rise:.3f} m | i={incl:.2f}%"
+        if r.get("cota_inicio_m") is not None and r.get("cota_fim_m") is not None:
+            medido += f" | cotas {r['cota_inicio_m']:.3f}→{r['cota_fim_m']:.3f} m"
+
+        if incl < RAMPA_I_MIN:
+            aviso = (f" Inclinação {incl:.2f}% muito próxima de 5% — confirmar no projeto/obra." if incl >= 4.5 else "")
+            linhas.append(_linha(r, "6.6", medido, f"i < {RAMPA_I_MIN:.0f}% (não é rampa) ou tabela 6.6",
+                                 "Conforme", fonte,
+                                 f"Inclinação {incl:.2f}% < 5%: pela NBR 9050 a superfície não é considerada rampa "
+                                 f"(piso inclinado de rota acessível)." + aviso + marker))
             continue
 
         lim = _limite_rampa(rise)
         if lim is None:
-            linhas.append(_linha(r, "6.6", f"desnível={rise:.2f} m | i={incl:.2f}%", "—",
-                                 "Indeterminado", fonte, "Desnível > 1,50 m: fora da tabela verificada."))
+            linhas.append(_linha(r, "6.6", medido, "—", "Indeterminado", fonte,
+                                 "Desnível > 1,50 m: fora da tabela verificada." + marker))
             continue
-
         ok = incl <= lim
-        marker = " [fallback: slab inclinado]" if "fallback" in fonte else ""
-        linhas.append(_linha(r, "6.6", f"desnível={rise:.2f} m | i={incl:.2f}%", f"i ≤ {lim:.2f}%",
+        linhas.append(_linha(r, "6.6", medido, f"i ≤ {lim:.2f}%",
                              "Conforme" if ok else "Não Conforme", fonte,
                              ("" if ok else f"Inclinação {incl:.2f}% acima do limite {lim:.2f}%.") + marker))
     return linhas
 # └─ fim PONTO 1 ──────────────────────────────────────────────────────────────
 
 
+def _descrever_corrimaos(assoc):
+    """Texto curto com o que a geometria encontrou ao lado da rampa."""
+    partes = []
+    for c in assoc:
+        alturas = []
+        if c.get("tem_070"): alturas.append("0,70")
+        if c.get("tem_092"): alturas.append("0,92")
+        par = "acompanha a rampa" if c.get("paralelo_a_rampa") else \
+              f"NÃO acompanha a inclinação (altura varia {c.get('variacao_altura_m', 0):.2f} m)"
+        partes.append(f"lado {c.get('lado')}: [{c.get('id')}] topo {c.get('altura_topo_m', 0):.2f} m, "
+                      f"níveis {'/'.join(alturas) or 'fora de 0,70/0,92'} m, {par}")
+    return "; ".join(partes)
+
+
 def _v_corrimao(escadas, rampas, corrimaos):
+    """
+    5.4.3 — corrimão nos dois lados, a 0,70 e 0,92 m, quando desnível > 0,19 m.
+
+    Rampas: usa a associação GEOMÉTRICA feita na extração (corrimaos_associados):
+    corrimão ao lado da rampa, lado (esquerdo/direito), alturas medidas a partir
+    da SUPERFÍCIE da rampa e se ele acompanha a inclinação.
+    Escadas: mantém o critério anterior (Psets), sem associação geométrica.
+    """
     linhas = []
     tem_railing = len(corrimaos) > 0
     tem_duplo = any(c.get("corrimao_duplo_070_092") for c in corrimaos)
-    alvos = [e for e in escadas if e.get("tipo_ifc") == "IfcStairFlight"]
-    alvos += [dict(r, desnivel_m=r.get("OverallRise_m")) for r in rampas]
-    for a in alvos:
-        d = _num(a.get("desnivel_m"))
-        exig = f"Corrimão 0,70 e 0,92 m se desnível > {DESNIVEL_CORRIMAO:.2f} m"
-        fonte = a.get("fonte_dados_rampa", "associacao_nao_verificada")
-        fallback_marker = ""
-        if "fallback" in str(fonte):
-            fallback_marker = " [Rampa detectada por fallback — validação manual recomendada]"
+    exig = f"Corrimão 2 lados, 0,70 e 0,92 m, se desnível > {DESNIVEL_CORRIMAO:.2f} m"
+
+    for e in [e for e in escadas if e.get("tipo_ifc") == "IfcStairFlight"]:
+        d = _num(e.get("desnivel_m"))
+        fonte = "associacao_nao_verificada"
+        if d is None:
+            linhas.append(_linha(e, "5.4.3", "—", exig, "Indeterminado", fonte, "Desnível não calculável."))
+        elif d <= DESNIVEL_CORRIMAO:
+            linhas.append(_linha(e, "5.4.3", f"desnível={d:.2f} m", exig, "N/A", fonte, "Desnível não exige corrimão."))
+        elif not tem_railing:
+            linhas.append(_linha(e, "5.4.3", f"desnível={d:.2f} m", exig, "Indeterminado", fonte,
+                                 "Nenhum IfcRailing no modelo — verificar in loco."))
+        else:
+            linhas.append(_linha(e, "5.4.3", f"desnível={d:.2f} m", exig,
+                                 "Conforme" if tem_duplo else "Não Conforme", fonte,
+                                 "Associação corrimão↔escada não verificada geometricamente."))
+
+    for r in rampas:
+        incl = _num(r.get("inclinacao_pct"))
+        if "IfcRamp" not in r.get("tipo_ifc", "") and not (incl is not None and 2.0 < incl < 30.0):
+            continue  # mesmo filtro do 6.6: só o que foi tratado como rampa
+        d = _num(r.get("OverallRise_m"))
+        assoc = r.get("corrimaos_associados")
+        fonte = "geometria_associacao_corrimao" if assoc is not None else "associacao_nao_verificada"
+        info = _descrever_corrimaos(assoc or [])
+        medido = (f"desnível={d:.2f} m" if d is not None else "desnível=—") + \
+                 (f" | {len(set(c['lado'] for c in assoc))} lado(s) com corrimão" if assoc else "")
 
         if d is None:
-            linhas.append(_linha(a, "5.4.3", "—", exig, "Indeterminado", fonte,
-                                 "Desnível não calculável." + fallback_marker))
-        elif d <= DESNIVEL_CORRIMAO:
-            linhas.append(_linha(a, "5.4.3", f"desnível={d:.2f} m", exig, "N/A", fonte,
-                                 "Desnível não exige corrimão."))
-        elif not tem_railing:
-            linhas.append(_linha(a, "5.4.3", f"desnível={d:.2f} m", exig, "Indeterminado",
-                                 fonte, "Nenhum IfcRailing no modelo — verificar in loco." + fallback_marker))
+            linhas.append(_linha(r, "5.4.3", medido, exig, "Indeterminado", fonte, "Desnível não calculável."))
+            continue
+        if d <= DESNIVEL_CORRIMAO:
+            msg = f"Desnível {d:.2f} m ≤ 0,19 m: corrimão não obrigatório por este item."
+            if incl is not None and incl < RAMPA_I_MIN:
+                msg += f" Inclinação {incl:.2f}% < 5% (não é rampa pela NBR)."
+            if info:
+                msg += f" Corrimãos encontrados (informativo): {info}."
+            linhas.append(_linha(r, "5.4.3", medido, exig, "N/A", fonte, msg))
+            continue
+        if assoc is None:
+            linhas.append(_linha(r, "5.4.3", medido, exig,
+                                 "Indeterminado" if not tem_railing else ("Conforme" if tem_duplo else "Não Conforme"),
+                                 fonte, "Sem geometria para associar corrimão↔rampa — verificar in loco."))
+            continue
+        lados = {c["lado"] for c in assoc}
+        lados_ok = {c["lado"] for c in assoc if c.get("tem_070") and c.get("tem_092") and c.get("paralelo_a_rampa")}
+        if len(lados_ok) == 2:
+            st_ = "Conforme"
+        elif not assoc:
+            st_ = "Não Conforme"
         else:
-            linhas.append(_linha(a, "5.4.3", f"desnível={d:.2f} m", exig,
-                                 "Conforme" if tem_duplo else "Não Conforme",
-                                 fonte,
-                                 "Associação corrimão↔escada não verificada geometricamente." + fallback_marker))
+            st_ = "Parcial"
+        falta = []
+        if len(lados) < 2: falta.append("corrimão em só um lado" if lados else "nenhum corrimão ao lado da rampa")
+        if lados - lados_ok: falta.append("lado(s) " + ", ".join(sorted(lados - lados_ok)) + " sem 0,70/0,92 m paralelos à rampa")
+        linhas.append(_linha(r, "5.4.3", medido, exig, st_, fonte,
+                             ("; ".join(falta) + ". " if falta else "") + (f"Detalhe: {info}." if info else "")))
+    return linhas
+
+
+def _v_desniveis(desniveis, chanfros):
+    """
+    6.3.4 — desníveis medidos nos pontos de passagem (portas e juntas de piso).
+      ≤ 5 mm       → Conforme (NBR: dispensa tratamento especial)
+      5 a 20 mm    → Conforme se houver chanfro modelado; senão Indeterminado
+                     (exige chanfro 1:2 — conferir detalhe/obra)
+      > 20 mm      → Não Conforme (é degrau: rota acessível pede rampa)
+    Tolerância de 0,5 mm para ruído de modelagem/arredondamento.
+    """
+    linhas = []
+    tem_chanfro = bool(chanfros)
+    exig = "≤ 5 mm livre | 5–20 mm com chanfro 1:2"
+    for x in desniveis:
+        mm = x.get("desnivel_mm")
+        el = {"GlobalId": x.get("GlobalId"), "Name": x.get("trecho") or x.get("Name"),
+              "tipo_ifc": x.get("tipo_ifc"), "pavimento": x.get("pavimento")}
+        onde = "porta" if x.get("tipo") == "porta" else "junta de lajes"
+        if mm is None:
+            linhas.append(_linha(el, "6.3.4", "—", exig, "Indeterminado", "geometria_lajes",
+                                 f"Sem piso modelado de um dos lados da {onde}."))
+            continue
+        medido = f"{mm:.1f} mm ({x.get('cota_lado_1_m')} / {x.get('cota_lado_2_m')} m)"
+        if mm <= DESNIVEL_SEM_TRAT_MM + TOL_MODELAGEM_MM:
+            st_ = "Conforme"
+            msg = f"Desnível de {mm:.1f} mm na {onde}: até 5 mm dispensa tratamento especial."
+        elif mm <= DESNIVEL_CHANFRO_MM + TOL_MODELAGEM_MM:
+            st_ = "Conforme" if tem_chanfro else "Indeterminado"
+            msg = (f"Desnível de {mm:.1f} mm na {onde}: exige chanfro com inclinação ≤ 1:2 (50%). "
+                   + ("Chanfro modelado no projeto — conferir posição." if tem_chanfro
+                      else "Nenhum chanfro modelado — verificar detalhe de soleira/obra."))
+        else:
+            st_ = "Não Conforme"
+            msg = f"Desnível de {mm:.1f} mm na {onde}: acima de 20 mm é degrau — rota acessível exige rampa."
+        linhas.append(_linha(el, "6.3.4", medido, exig, st_, "geometria_lajes", msg))
     return linhas
 
 
@@ -481,9 +593,8 @@ def gerar_verificacoes(elementos: dict) -> list[dict]:
     Gera a tabela de verificação POR ELEMENTO a partir das listas completas
     extraídas do IFC (elementos["_completo"]).
 
-    Itens fora daqui (continuam só com o LLM): 6.3.4 (desníveis de piso) e
-    7.7.1 (área de transferência lateral) — exigem análise espacial que ainda
-    não está implementada.
+    Item fora daqui (continua só com o LLM): 7.7.1 (área de transferência
+    lateral) — exige análise espacial ainda não implementada.
     """
     c = (elementos or {}).get("_completo", {})
     linhas = []
@@ -497,6 +608,7 @@ def gerar_verificacoes(elementos: dict) -> list[dict]:
     linhas += _v_lavatorios(c.get("lavatorios", []))
     linhas += _v_barras(c.get("barras", []))
     linhas += _v_macaneta(c.get("portas", []))
+    linhas += _v_desniveis(c.get("desniveis", []), c.get("chanfros", []))
     return linhas
 
 
@@ -532,8 +644,10 @@ def aplicar_veredito_python(resultados_llm: list[dict], linhas: list[dict]) -> l
     TOTAL da bacia com caixa acoplada (0,81 m) e marcava Não Conforme, mesmo
     com o Python já descontando o tanque (rim = 0,435 m → Conforme).
 
-    Itens qualitativos (texto) continuam com o LLM. O status original do LLM
-    fica guardado em "status_llm_original" para a comparação da dissertação.
+    Itens qualitativos (4.6.6 maçaneta, 7.8 lavatório) também seguem o Python —
+    que aplica o ESCOPO certo (ex: maçaneta só em portas de ambiente PCD) —
+    mas ficam sempre marcados com 🔍 (confirmação humana). O status original do
+    LLM fica guardado em "status_llm_original" para a comparação da dissertação.
     """
     def _norm(i):
         return str(i).replace("–", "-").replace("—", "-").replace(" ", "")
@@ -544,8 +658,6 @@ def aplicar_veredito_python(resultados_llm: list[dict], linhas: list[dict]) -> l
         por_item.setdefault(l["item_nbr"], []).append(l)
 
     for item, ls in por_item.items():
-        if item in ITENS_QUALITATIVOS:
-            continue
         st_py = status_item_python(ls)
         if st_py is None:
             continue
@@ -569,7 +681,8 @@ def aplicar_veredito_python(resultados_llm: list[dict], linhas: list[dict]) -> l
             "globalid": ", ".join(l["global_id"] or "" for l in ls),
             "tipo_ifc": ", ".join(sorted({l["ifc_class"] or "" for l in ls})),
             "recomendacao": rec,
-            "requer_confirmacao_humana": bool(cont["Parcial"] or cont["Indeterminado"]),
+            "requer_confirmacao_humana": bool(cont["Parcial"] or cont["Indeterminado"]
+                                              or item in ITENS_QUALITATIVOS),
             "fonte_veredito": "python",
         }
         alvo = next((r for r in resultados if _norm(r.get("item_nbr")) == _norm(item)), None)
@@ -625,7 +738,8 @@ def gerar_observacoes(resultados: list[dict], resumo: dict) -> str:
         return [r for r in resultados if classificar_status(r.get("status", "")) == cat]
 
     def _fmt(rs):
-        return "; ".join(f"{r.get('item_nbr')} {r.get('categoria','')}".strip() for r in rs)
+        return "; ".join(f"{r.get('item_nbr')} {CATEGORIAS.get(str(r.get('item_nbr')), r.get('categoria', ''))}".strip()
+                         for r in rs)
 
     partes = [
         f"Avaliados {resumo.get('total', 0)} itens da NBR 9050:2020: "

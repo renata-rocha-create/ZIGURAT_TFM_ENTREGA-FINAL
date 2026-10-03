@@ -6,6 +6,11 @@ para os 12 itens da NBR 9050. Não conversa com o LLM nem com a interface.
 """
 from pathlib import Path
 
+from geometria_nbr import (poligono_planta, ambientes_da_porta, analisar_laje,
+                           triangulos_topo, desnivel_na_porta,
+                           desniveis_entre_lajes, corrimaos_da_rampa,
+                           dist_ponto_poligono)
+
 
 def _pavimento(el):
     """
@@ -82,7 +87,8 @@ def extract_ifc_elements(ifc_path: str) -> dict:
     - IfcFlowTerminal: contém bacias, lavatórios, barras de apoio, torneiras — filtrar por nome
     - IfcRailing: contém guarda-corpos (não corrimão) — modelo não tem corrimão separado
     - IfcSpace: ausente neste modelo — fallback via IfcWall necessário
-    - IfcRamp/IfcRampFlight: ausentes neste modelo
+    - IfcRamp/IfcRampFlight: ausentes no BENCHMARK_00 — a rampa é um IfcSlab inclinado,
+      detectado pela geometria (geometria_nbr.analisar_laje)
     """
     try:
         import ifcopenshell
@@ -162,6 +168,48 @@ def extract_ifc_elements(ifc_path: str) -> dict:
 
     resultado = {"schema": schema, "arquivo": Path(ifc_path).name, "elementos": {}}
 
+    # ── Malhas 3D (ifcopenshell.geom) — usadas por rampas, portas e desníveis ─
+    # Coordenadas do MUNDO, em metros. Cache por GlobalId: cada elemento é
+    # triangulado uma única vez, mesmo que vários itens da NBR precisem dele.
+    try:
+        import numpy as _npm
+        import ifcopenshell.geom as _gm
+        _gsm = _gm.settings()
+        _gsm.set(_gsm.USE_WORLD_COORDS, True)
+    except Exception:
+        _gsm = None
+    _cache_malha = {}
+
+    def _malha(el):
+        """(verts N×3, faces) do elemento, ou (None, None) se não houver geometria."""
+        if _gsm is None or el is None:
+            return None, None
+        gid = el.GlobalId
+        if gid not in _cache_malha:
+            try:
+                sh = _gm.create_shape(_gsm, el)
+                v = _npm.array(sh.geometry.verts, dtype=float).reshape(-1, 3)
+                f = _npm.array(sh.geometry.faces, dtype=int)
+                _cache_malha[gid] = (v, f) if len(v) else (None, None)
+            except Exception:
+                _cache_malha[gid] = (None, None)
+        return _cache_malha[gid]
+
+    # Polígono em planta de cada IfcSpace — base para saber de que lado de
+    # cada porta fica cada ambiente (4.6.6) e para rotular desníveis (6.3.4).
+    _poligonos_espacos = {}   # GlobalId → (nome legível, polígono xy)
+    for _sp in ifc.by_type("IfcSpace"):
+        _v, _f = _malha(_sp)
+        if _v is None:
+            continue
+        try:
+            _pol = poligono_planta(_v, so_base=True)
+        except Exception:
+            continue
+        if len(_pol) >= 3:
+            _nm = " ".join(x for x in [(_sp.Name or ""), (getattr(_sp, "LongName", "") or "")] if x).strip()
+            _poligonos_espacos[_sp.GlobalId] = (_nm or _sp.GlobalId, _pol)
+
     # ── Inventário ────────────────────────────────────────────────────────────
     resultado["inventario_modelo"] = {
         t: contar(t) for t in [
@@ -200,7 +248,7 @@ def extract_ifc_elements(ifc_path: str) -> dict:
     except Exception:
         pass
 
-    def eh_acessivel_pne(el, texto_proprio):
+    def eh_acessivel_pne(el, texto_proprio, usar_pavimento=True):
         if any(t in texto_proprio for t in TERMOS_ACESSIVEL):
             return True, "nome_elemento"
         if _get_container:
@@ -212,7 +260,7 @@ def extract_ifc_elements(ifc_path: str) -> dict:
                         return True, "nome_espaco_continente"
             except Exception:
                 pass
-        flags = _san_por_pav.get(_pavimento(el))
+        flags = _san_por_pav.get(_pavimento(el)) if usar_pavimento else None
         if flags and all(flags):
             return True, "pavimento_so_sanitarios_acessiveis"
         return False, None
@@ -230,7 +278,28 @@ def extract_ifc_elements(ifc_path: str) -> dict:
         d["Psets"] = todos_psets(el)
 
         nome_porta = (getattr(el, "Name", "") or "").lower() + " " + (getattr(el, "ObjectType", "") or "").lower()
-        pne_ok, pne_fonte = eh_acessivel_pne(el, nome_porta)
+
+        # 4.6.6 vale só para portas de AMBIENTE PCD/PNE. A porta fica dentro da
+        # parede (contida no pavimento, não no IfcSpace), então o critério é
+        # geométrico: quais ambientes estão dos dois lados do vão. Se um deles
+        # for PCD/PNE → a porta entra no item. O nome da família NÃO decide.
+        ambientes = []
+        _v, _f = _malha(el)
+        if _v is not None and _poligonos_espacos:
+            try:
+                chaves = ambientes_da_porta(_v, {k: pol for k, (nm, pol) in _poligonos_espacos.items()})
+                ambientes = [_poligonos_espacos[k][0] for k in chaves]
+            except Exception:
+                ambientes = []
+        if ambientes:
+            d["ambientes_adjacentes"] = ambientes
+            pne_ok = any(any(t in a.lower() for t in TERMOS_ACESSIVEL) for a in ambientes)
+            pne_fonte = "ambiente_adjacente_geometria" if pne_ok else None
+        else:
+            # Sem geometria: nome da porta / IfcSpace continente — SEM o
+            # fallback "pavimento só tem sanitário PNE", que marcava TODAS as
+            # portas do pavimento como PNE.
+            pne_ok, pne_fonte = eh_acessivel_pne(el, nome_porta, usar_pavimento=False)
         d["pne_pcd_confirmado"] = pne_ok  # relevante só pro item 4.6.6 (maçaneta) — 6.11.2 (vão livre) vale pra todas
         if pne_fonte:
             d["pne_pcd_fonte"] = pne_fonte
@@ -240,7 +309,8 @@ def extract_ifc_elements(ifc_path: str) -> dict:
     resultado["estatisticas_portas"] = _estatisticas_portas(portas)
     n_portas_pne = sum(1 for p in portas if p.get("pne_pcd_confirmado"))
     resultado["nota_portas_pne"] = (
-        f"{n_portas_pne} de {len(portas)} portas foram identificadas em ambiente/nome PNE/PCD. "
+        f"{n_portas_pne} de {len(portas)} portas dão acesso a ambiente PNE/PCD (verificado pela posição "
+        f"da porta em relação aos IfcSpace — ver 'ambientes_adjacentes'). "
         f"O item 4.6.6 (maçaneta tipo alavanca) deve ser avaliado SOMENTE nessas portas — "
         f"as demais ficam fora do escopo desse item específico (mas continuam valendo para 6.11.2, vão livre)."
     )
@@ -330,23 +400,59 @@ def extract_ifc_elements(ifc_path: str) -> dict:
                 d["inclinacao_pct"] = round(rise_m / run_m * 100, 2)
             rampas.append(d)
 
-    # Fallback: IfcSlab modelado como rampa (nome contém "rampa"/"ramp"/"slope")
+    # Superfície de cada rampa (plano ajustado ao topo) — usada no 5.4.3
+    # para medir a altura dos corrimãos em relação ao PISO DA RAMPA.
+    _info_rampas = {}
+    for d in rampas:
+        try:
+            _v, _f = _malha(ifc.by_guid(d["GlobalId"]))
+            inf = analisar_laje(_v) if _v is not None else None
+            if inf and inf["inclinacao_pct"] > 0.5:
+                _info_rampas[d["GlobalId"]] = inf
+        except Exception:
+            pass
+
+    # Fallback: rampa modelada como IfcSlab. Dois gatilhos:
+    #   (a) nome contém "rampa"/"ramp"/"slope";
+    #   (b) GEOMETRIA: topo plano com inclinação entre 2% e 30% (nbr9050_rules.json, item 6.6).
+    # (b) é o que pega o caso comum do Revit: um "Floor" com seta de inclinação,
+    # sem nenhuma palavra "rampa" no nome.
     for el in ifc.by_type("IfcSlab"):
         nome = (getattr(el, "Name", "") or "").lower()
         otype = (getattr(el, "ObjectType", "") or "").lower()
-        if any(t in nome + otype for t in ["rampa", "ramp", "slope"]):
-            d = info_basica(el, "IfcSlab(rampa-fallback)")
-            d["Psets"] = todos_psets(el)
-            rise_geo, run_geo = _geom_bbox_rise_run(el)
-            if rise_geo and run_geo:
-                d["OverallRise_m"] = rise_geo
-                d["OverallRun_m"] = run_geo
-                d["fonte_dados_rampa"] = "geometria_bounding_box_slab_ESTIMATIVA"
-                if run_geo > 0:
-                    d["inclinacao_pct"] = round(rise_geo / run_geo * 100, 2)
-            rampas.append(d)
+        por_nome = any(t in nome + otype for t in ["rampa", "ramp", "slope"])
+        _v, _f = _malha(el)
+        try:
+            inf = analisar_laje(_v) if _v is not None else None
+        except Exception:
+            inf = None
+        inclinada = bool(inf and inf["planar"] and 2.0 < inf["inclinacao_pct"] < 30.0)
+        if not (por_nome or inclinada):
+            continue
+        d = info_basica(el, "IfcSlab(rampa-fallback)")
+        d["Psets"] = todos_psets(el)
+        d["deteccao_rampa"] = "nome do elemento" if por_nome else "geometria: laje inclinada (2% < i < 30%)"
+        if inf:
+            d["OverallRise_m"] = inf["desnivel_m"]
+            d["OverallRun_m"] = inf["comprimento_m"]
+            d["inclinacao_pct"] = inf["inclinacao_pct"]
+            d["cota_inicio_m"] = inf["z_topo_min"]
+            d["cota_fim_m"] = inf["z_topo_max"]
+            d["topo_planar"] = inf["planar"]
+            d["fonte_dados_rampa"] = "geometria_laje_inclinada_fallback"
+            if inf["inclinacao_pct"] > 0.5:
+                _info_rampas[el.GlobalId] = inf
+        else:
+            d["fonte_dados_rampa"] = "nome_sem_geometria_fallback"
+        rampas.append(d)
     resultado["elementos"]["Rampas"] = rampas
-    resultado["nota_rampas"] = f"Modelo tem {contar('IfcRamp')} IfcRamp e {contar('IfcRampFlight')} IfcRampFlight. Sem rampas modeladas neste projeto."
+    n_slab_rampa = sum(1 for r in rampas if r.get("tipo_ifc") == "IfcSlab(rampa-fallback)")
+    resultado["nota_rampas"] = (
+        f"Modelo tem {contar('IfcRamp')} IfcRamp e {contar('IfcRampFlight')} IfcRampFlight. "
+        + (f"{n_slab_rampa} IfcSlab identificado(s) como rampa (nome ou laje inclinada 2%–30%), "
+           f"com desnível e inclinação medidos no TOPO da laje (sem somar a espessura)."
+           if n_slab_rampa else "Nenhum IfcSlab inclinado encontrado.")
+    )
 
     # ── 3. ESCADAS + DESNÍVEL CALCULADO (5.4.3) ───────────────────────────────
     # ATENÇÃO: RiserHeight e TreadLength do Revit/IFC2X3 estão em PÉS → x0.3048
@@ -469,6 +575,28 @@ def extract_ifc_elements(ifc_path: str) -> dict:
         corrimaos.append(d)
 
     resultado["elementos"]["Corrimaos"] = corrimaos
+
+    # Associação corrimão ↔ rampa pela GEOMETRIA (5.4.3): quais IfcRailing
+    # correm ao lado de cada rampa, de que lado, a que altura da SUPERFÍCIE
+    # da rampa e se acompanham a inclinação.
+    _malhas_corrimao = []
+    for c in corrimaos:
+        try:
+            _v, _f = _malha(ifc.by_guid(c["GlobalId"]))
+        except Exception:
+            _v = None
+        if _v is not None:
+            _malhas_corrimao.append({"id": c["GlobalId"], "nome": c.get("Name"), "verts": _v})
+    for d in rampas:
+        inf = _info_rampas.get(d["GlobalId"])
+        if inf is None or not _malhas_corrimao:
+            continue
+        try:
+            assoc = corrimaos_da_rampa(inf, _malhas_corrimao)
+        except Exception:
+            assoc = []
+        d["corrimaos_associados"] = assoc
+        d["corrimao_lados"] = sorted({a["lado"] for a in assoc})
     if not corrimaos:
         resultado["nota_corrimaos"] = "Modelo não tem nenhum IfcRailing."
     elif algum_com_corrimao_duplo:
@@ -841,6 +969,83 @@ def extract_ifc_elements(ifc_path: str) -> dict:
         pisos.append(d)
     resultado["elementos"]["IfcSlab"] = pisos[:25]
 
+    # ── 6.3.4 — DESNÍVEIS medidos onde se passa ──────────────────────────────
+    # (a) em cada PORTA: cota do piso acabado um passo antes e um passo depois
+    #     do vão (triângulos de topo das lajes → cota exata no ponto);
+    # (b) em JUNTAS de lajes que se encostam sem parede no meio (ex: topo de
+    #     rampa chegando no piso do ACESSO).
+    # Analogia: é passar a régua de nível no batente de cada porta e em cada
+    # emenda de piso — em vez de comparar a "cota média" de lajes inteiras.
+    desniveis = []
+    _lajes = []
+    for el in ifc.by_type("IfcSlab"):
+        _v, _f = _malha(el)
+        if _v is None:
+            continue
+        try:
+            _lajes.append({"id": el.GlobalId, "nome": el.Name, "verts": _v,
+                           "tris": triangulos_topo(_v, _f)})
+        except Exception:
+            pass
+    _tris = [l["tris"] for l in _lajes if len(l["tris"])]
+
+    if _tris:
+        for p in portas:
+            try:
+                _v, _f = _malha(ifc.by_guid(p["GlobalId"]))
+                if _v is None:
+                    continue
+                r = desnivel_na_porta(_v, _tris)
+            except Exception:
+                continue
+            amb = p.get("ambientes_adjacentes") or []
+            desniveis.append({
+                "tipo": "porta", "GlobalId": p["GlobalId"], "Name": p.get("Name"),
+                "tipo_ifc": "IfcDoor", "pavimento": p.get("pavimento"),
+                "trecho": " ↔ ".join(amb) if amb else "ambientes não identificados",
+                "cota_lado_1_m": r["z_1"], "cota_lado_2_m": r["z_2"],
+                "desnivel_mm": r["desnivel_mm"],
+            })
+    def _rotulo_laje(gid, nome):
+        if gid in _info_rampas:
+            return "rampa"
+        partes = (nome or "").split(":")
+        return "piso " + (partes[1] if len(partes) >= 2 else (nome or gid))
+
+    def _ambientes_perto(xy, raio=0.6):
+        perto = sorted((dist_ponto_poligono(xy, pol), nm) for nm, pol in _poligonos_espacos.values())
+        return [nm for d_, nm in perto if d_ <= raio]
+
+    try:
+        for j in desniveis_entre_lajes(_lajes):
+            amb = _ambientes_perto(j["junta_xy"])
+            trecho = (f"{_rotulo_laje(j['a'], j['nome_a'])} ↔ {_rotulo_laje(j['b'], j['nome_b'])}"
+                      + (f" (junto a {', '.join(amb)})" if amb else ""))
+            desniveis.append({
+                "tipo": "junta_lajes", "GlobalId": j["a"], "Name": f"{j['nome_a']} ↔ {j['nome_b']}",
+                "tipo_ifc": "IfcSlab", "trecho": trecho,
+                "GlobalId_outra_laje": j["b"],
+                "cota_lado_1_m": j["z_a"], "cota_lado_2_m": j["z_b"],
+                "desnivel_mm": j["desnivel_mm"],
+            })
+    except Exception:
+        pass
+
+    # Chanfros / soleiras rampadas modelados explicitamente (atenuante p/ 5–20 mm)
+    TERMOS_CHANFRO = ["chanfro", "transition", "transição", "transicao", "soleira rampada"]
+    chanfros = []
+    for el in ifc.by_type("IfcBuildingElementProxy"):
+        txt = ((getattr(el, "Name", "") or "") + " " + (getattr(el, "ObjectType", "") or "")).lower()
+        if any(t in txt for t in TERMOS_CHANFRO):
+            chanfros.append(info_basica(el, "IfcBuildingElementProxy(chanfro)"))
+    resultado["elementos"]["Desniveis_pisos"] = desniveis[:40]
+    resultado["elementos"]["Chanfros"] = chanfros[:20]
+    resultado["nota_desniveis"] = (
+        f"{len(desniveis)} pontos de passagem medidos (portas e juntas de lajes). "
+        f"NBR 9050 6.3.4: até 5 mm dispensa tratamento; 5–20 mm exige chanfro 1:2; "
+        f"acima de 20 mm é degrau. Chanfros modelados: {len(chanfros)}."
+    )
+
     # ── 9. PAREDES — amostra (fallback para corredores) ───────────────────────
     paredes = []
     for el in list(ifc.by_type("IfcWall"))[:8] + list(ifc.by_type("IfcWallStandardCase"))[:8]:
@@ -861,6 +1066,7 @@ def extract_ifc_elements(ifc_path: str) -> dict:
         "portas": portas, "rampas": rampas, "escadas": escadas,
         "corrimaos": corrimaos, "espacos": espacos, "bacias": bacias,
         "lavatorios": lavatórios, "barras": barras, "janelas": janelas,
+        "desniveis": desniveis, "chanfros": chanfros,
     }
 
     return limpar_nulos(resultado)
