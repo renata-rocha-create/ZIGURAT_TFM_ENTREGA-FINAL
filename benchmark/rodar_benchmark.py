@@ -92,7 +92,14 @@ def main():
             print(f"{v}: arquivo não encontrado — pulando"); continue
         t0 = time.time()
         elem = extract_ifc_elements(str(caminho))
+        if not isinstance(elem, dict) or elem.get("error") or "_completo" not in elem:
+            erro = elem.get("error") if isinstance(elem, dict) else elem
+            sys.exit(f"\n{v}: a extração do IFC FALHOU → {erro}\n"
+                     f"Nada foi gravado. Confira se o ifcopenshell está instalado neste Python:\n"
+                     f'    python -c "import ifcopenshell; print(ifcopenshell.version)"')
         linhas = gerar_verificacoes(elem)
+        if not linhas:
+            sys.exit(f"\n{v}: o auditor não gerou nenhuma verificação — algo está errado na extração. Nada foi gravado.")
         py = status_python(linhas, itens)
         llm = {i: "—" for i in itens}
         final = {i: "—" for i in itens}   # sem LLM não há "relatório final" a medir
