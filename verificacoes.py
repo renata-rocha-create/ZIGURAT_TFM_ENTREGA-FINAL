@@ -554,6 +554,12 @@ def _v_bacias(bacias):
     linhas = []
     for b in bacias:
         h_total, fonte = _altura_equip(b)
+        # Prioridade: MountingHeight explícito > topo da geometria ("geo") >
+        # demais proxies. O Z do placement é o ponto de inserção (no piso),
+        # nunca a altura da bacia (bug encontrado pelo benchmark, S01/S02).
+        g = b.get("geo")
+        if g and fonte != "pset_mountingheight" and g.get("z_max") is not None:
+            h_total, fonte = g["z_max"], "geometria_bbox_topo"
         nome = _nome(b)
 
         if h_total is None:

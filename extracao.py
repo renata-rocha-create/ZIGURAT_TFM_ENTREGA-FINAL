@@ -979,9 +979,13 @@ def extract_ifc_elements(ifc_path: str) -> dict:
         except Exception:
             return None
 
+    # Altura pela geometria SEMPRE que não houver MountingHeight explícito.
+    # O Z do placement é o PONTO DE INSERÇÃO da família (na bacia, fica no
+    # piso), não a altura da peça: uma bacia inserida 2 cm acima do nível era
+    # lida como "0,02 m de altura". Bug encontrado pelo benchmark (S01/S02).
     for lista, categoria in ((bacias, "bacia"), (barras, "barra")):
         for d in lista:
-            if d.get("MountingHeight_m") or d.get("Z_placement_m"):
+            if d.get("MountingHeight_m"):
                 continue
             try:
                 el = ifc.by_guid(d["GlobalId"])

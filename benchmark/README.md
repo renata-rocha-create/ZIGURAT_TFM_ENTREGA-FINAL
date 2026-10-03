@@ -67,6 +67,21 @@ Os dois falsos negativos vêm de **decisões de tolerância**, não de erros de 
 
 Arquivos: `resultados.csv`, `metricas.csv` (inclui as métricas por item) e `erros_auditor.csv`.
 
+## Bug encontrado pelo próprio benchmark (rodada v1 → v2)
+
+Na primeira rodada completa no computador do projeto (ifcopenshell 0.9.0, 03/10/2026), a variante **S02** (bacia 2 cm mais alta) saiu "Indeterminado" no item 7.7.2.1, em vez de "Parcial". Na S01 o motivo era o mesmo.
+
+**Causa.** Quando o ponto de inserção da família (o Z do placement) era ≥ 1 cm, o auditor o usava como **altura** da bacia. Só que esse ponto fica no **piso**, então a bacia era lida como tendo 0,02 m. Isso afetaria também modelos reais com a bacia inserida acima do nível.
+
+**Correção** (`extracao.py` e `verificacoes._v_bacias`): a altura agora segue esta prioridade:
+1. propriedade `MountingHeight`;
+2. topo da geometria (sólido "Body");
+3. só então os demais indicadores.
+
+Na rodada v2, a S02 sai Parcial e a S01 sai Indeterminado pela regra de tolerância.
+
+**Registro.** Os arquivos da rodada v1 ficam em `benchmark/rodada_v1/`, como evidência do bug encontrado. Este é um resultado do próprio método: a injeção de erros revelou uma falha que os testes com o modelo-base não mostravam.
+
 ## Limitações
 
 - **Camada LLM ainda não medida.** O comando está abaixo e precisa da chave de API.
