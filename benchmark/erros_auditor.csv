@@ -1,0 +1,3 @@
+camada,variante,item_nbr,esperado,obtido,tipo_erro,detalhe_python
+python,S01,7.7.2.1,Não Conforme,Indeterminado,estrito=FN; amplo=categoria,Indeterminado: Altura 0.495 m fora da faixa aceitável (< 0.41 m ou > 0.47 m). Requer verificação in loco.
+python,S02,7.6-7.8,Parcial,Conforme,estrito=FN; amplo=FN,
