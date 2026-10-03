@@ -414,71 +414,50 @@ def _v_bacias(bacias):
 # └─ fim PONTO 3 ──────────────────────────────────────────────────────────────
 
 
-# ┌─ PONTO 4: Barras com Posição ───────────────────────────────────────────────
-def _classificar_barra_posicao(nome_elemento: str, altura: float) -> tuple:
-    """
-    Classifica barra por posição e retorna faixa de altura esperada.
+# ┌─ PONTO 4: Barras de apoio ─────────────────────────────────────────────────
+# Referência: nbr9050_rules.json (itens 7.6–7.8) → barras horizontais a ~0,75 m.
+#
+# Analogia: a extração (extracao.py) já "olha" a caixa envolvente (bounding box)
+# de cada barra e diz se ela está DEITADA (horizontal → mede o eixo) ou EM PÉ
+# (vertical → mede a base). Aqui só aplicamos a régua certa a cada caso:
+#   horizontal  0,70–0,80 m → Conforme
+#               0,65–0,85 m → Parcial (perto do limite — conferir na mão)
+#               fora disso  → Indeterminado (pode ser barra de lavatório,
+#                             de porta ou modelada errada — conferir in loco)
+#   vertical    → Indeterminado: a posição depende da barra horizontal vizinha,
+#                 o que exige análise espacial ainda não implementada.
 
-    Analogia técnica: É como validar barras de proteção em um parque. Uma barra
-    a 0.75 m é perfeita para que um adulto se segure em pé (Frontal A), mas
-    0.40 m é o certo para se sentar (Lateral B). Medir tudo contra 0.75 m seria
-    como pedir que todas as pessoas usem o mesmo tamanho de sapato.
-
-    Retorna: (posicao, h_min, h_max)
-    """
-    n = (nome_elemento or "").lower()
-
-    # Ordem importa: checar termos mais específicos antes de genéricos
-    if "escada" in n or "corrimão" in n or "corrimao" in n:
-        return "Escada (E)", 0.80, 0.90    # 0.85m
-    elif "infantil" in n or "criança" in n or "crianca" in n:
-        return "Infantil (D)", 0.25, 0.35  # 0.30m
-    elif "lateral" in n or "lado" in n:
-        return "Lateral (B)", 0.35, 0.45   # 0.40m
-    elif "frontal" in n or "frente" in n or "vaso" in n:
-        return "Frontal (A)", 0.70, 0.80   # 0.75m
-    else:
-        # Infere pela altura se nome não diz
-        if 0.80 <= altura <= 0.90:
-            return "Escada (E)", 0.80, 0.90
-        elif 0.70 <= altura <= 0.80:
-            return "Frontal? (A)", 0.70, 0.80
-        elif 0.35 <= altura <= 0.45:
-            return "Lateral? (B)", 0.35, 0.45
-        elif 0.25 <= altura <= 0.35:
-            return "Infantil? (D)", 0.25, 0.35
-        else:
-            # Fallback: assume frontal como padrão
-            return "Frontal? (A)", 0.70, 0.80
+BARRA_TOL_PARCIAL = 0.05
 
 
 def _v_barras(barras):
     linhas = []
+    h_min, h_max = BARRA_ALT_REF - BARRA_TOL, BARRA_ALT_REF + BARRA_TOL
+    exig = f"Horizontal: {h_min:.2f}–{h_max:.2f} m (eixo)"
     for b in barras:
         h, fonte = _altura_equip(b)
-        nome = _nome(b)
 
         if h is None:
-            linhas.append(_linha(b, "7.6-7.8", "—", "Varia por posição", "Indeterminado",
-                                 fonte, "Sem altura disponível."))
+            linhas.append(_linha(b, "7.6-7.8", "—", exig, "Indeterminado",
+                                 fonte, "Sem altura disponível — verificar in loco."))
             continue
 
-        # Classifica por posição
-        posicao, h_min, h_max = _classificar_barra_posicao(nome, h)
-        exig = f"{posicao}: {h_min:.2f}–{h_max:.2f} m"
+        if b.get("barra_vertical"):
+            linhas.append(_linha(b, "7.6-7.8", f"base={h:.3f} m (vertical)", exig, "Indeterminado", fonte,
+                                 f"Barra vertical com base a {h:.3f} m — posição depende da barra "
+                                 "horizontal vizinha; verificar manualmente."))
+            continue
 
-        # Validação em 3 faixas
         if h_min <= h <= h_max:
-            status = "Conforme"
-            msg = f"Altura {h:.3f} m dentro da faixa para {posicao}"
-        elif (h_min - 0.05) <= h <= (h_max + 0.05):
+            status, msg = "Conforme", ""
+        elif (h_min - BARRA_TOL_PARCIAL) <= h <= (h_max + BARRA_TOL_PARCIAL):
             status = "Parcial"
-            msg = f"Altura {h:.3f} m próxima à faixa para {posicao}. Validação manual recomendada."
+            msg = f"Altura {h:.3f} m próxima do limite ({h_min:.2f}–{h_max:.2f} m) — validação manual recomendada."
         else:
-            status = "Não Conforme"
-            msg = f"Altura {h:.3f} m fora da faixa esperada para {posicao}"
-
-        linhas.append(_linha(b, "7.6-7.8", f"{h:.3f} m", exig, status, fonte, msg))
+            status = "Indeterminado"
+            msg = (f"Altura {h:.3f} m fora da faixa de barra horizontal junto à bacia — pode ser barra "
+                   "de lavatório/porta ou erro de modelagem; verificar in loco.")
+        linhas.append(_linha(b, "7.6-7.8", f"eixo={h:.3f} m", exig, status, fonte, msg))
     return linhas
 # └─ fim PONTO 4 ──────────────────────────────────────────────────────────────
 
@@ -533,7 +512,10 @@ def status_item_python(linhas_item: list[dict]):
     aval = [s for s in st_ if s in ("Conforme", "Não Conforme", "Parcial")]
     if not aval:
         return "N/A" if all(s == "N/A" for s in st_) else "Indeterminado"
-    if all(s == "Conforme" for s in aval): return "Conforme"
+    if all(s == "Conforme" for s in aval):
+        # Conformes + elementos sem confirmação → não dá pra afirmar "Conforme"
+        # para o item inteiro (critério conservador): fica Parcial.
+        return "Parcial" if "Indeterminado" in st_ else "Conforme"
     if all(s == "Não Conforme" for s in aval): return "Não Conforme"
     return "Parcial"
 
@@ -567,16 +549,27 @@ def aplicar_veredito_python(resultados_llm: list[dict], linhas: list[dict]) -> l
         st_py = status_item_python(ls)
         if st_py is None:
             continue
-        medidos  = "; ".join(f"{(l['nome'] or '—')[:40]}: {l['valor_medido']}" for l in ls)
-        mensagens = " | ".join(f"[{l['global_id']}] {l['mensagem']}" for l in ls if l.get("mensagem"))
+        cont = {k: sum(1 for l in ls if l["status"] == k)
+                for k in ("Conforme", "Parcial", "Não Conforme", "Indeterminado")}
+        pend = [l for l in ls if l["status"] != "Conforme" and l.get("mensagem")]
+        resumo_cont = f"{cont['Conforme']} de {len(ls)} elementos conformes"
+        extras = [f"{v} {k.lower()}" for k, v in cont.items() if k != "Conforme" and v]
+        if extras:
+            resumo_cont += " (" + ", ".join(extras) + ")"
+        medidos = "; ".join(f"{(l['nome'] or '—')[:40]}: {l['valor_medido']}" for l in ls)
+        if pend:
+            rec = "[Verificação Python] " + " | ".join(f"[{l['global_id']}] {l['mensagem']}" for l in pend)
+        else:
+            rec = "[Verificação Python] Todos os elementos atendem — sem pendências."
         novo = {
             "status": st_py,
-            "valor_encontrado": medidos,
-            "valor_exigido": ls[0]["valor_exigido"],
+            "valor_encontrado": (resumo_cont + ". " + medidos) if len(ls) > 1 else medidos,
+            "valor_exigido": " / ".join(sorted({l["valor_exigido"] for l in ls})),
             "elemento": ", ".join(sorted({(l['nome'] or '—')[:40] for l in ls})),
             "globalid": ", ".join(l["global_id"] or "" for l in ls),
             "tipo_ifc": ", ".join(sorted({l["ifc_class"] or "" for l in ls})),
-            "recomendacao": f"[Verificação Python] {mensagens}",
+            "recomendacao": rec,
+            "requer_confirmacao_humana": bool(cont["Parcial"] or cont["Indeterminado"]),
             "fonte_veredito": "python",
         }
         alvo = next((r for r in resultados if _norm(r.get("item_nbr")) == _norm(item)), None)
@@ -617,6 +610,46 @@ def comparar_com_llm(linhas: list[dict], resultados_llm: list[dict]) -> dict:
     taxa = round(n_ok / len(comparaveis) * 100, 1) if comparaveis else None
     return {"tabela": tabela, "concordantes": n_ok, "comparaveis": len(comparaveis),
             "taxa_concordancia": taxa}
+
+
+def gerar_observacoes(resultados: list[dict], resumo: dict) -> str:
+    """
+    Resumo executivo escrito em PYTHON a partir dos status FINAIS.
+
+    Analogia: o LLM escrevia a "capa do laudo" ANTES do engenheiro revisar as
+    medições — então a capa podia dizer "bacia não conforme" enquanto a tabela
+    (já corrigida) dizia "Conforme". Agora a capa é escrita DEPOIS, com os
+    mesmos números da tabela e dos cards. Impossível divergir.
+    """
+    def _lista(cat):
+        return [r for r in resultados if classificar_status(r.get("status", "")) == cat]
+
+    def _fmt(rs):
+        return "; ".join(f"{r.get('item_nbr')} {r.get('categoria','')}".strip() for r in rs)
+
+    partes = [
+        f"Avaliados {resumo.get('total', 0)} itens da NBR 9050:2020: "
+        f"{resumo.get('conformes', 0)} conformes, {resumo.get('parciais', 0)} parciais, "
+        f"{resumo.get('nao_conformes', 0)} não conformes, {resumo.get('indeterminados', 0)} indeterminados "
+        f"e {resumo.get('na', 0)} N/A. Conformidade: {resumo.get('percentual_conformidade')} (bruta) | "
+        f"{resumo.get('percentual_sobre_verificaveis')} (sobre itens aplicáveis)."
+    ]
+    if _lista("Conforme"):
+        partes.append("CONFORMES: " + _fmt(_lista("Conforme")) + ".")
+    atencao = _lista("Não Conforme") + _lista("Parcial")
+    if atencao:
+        partes.append("PONTOS DE ATENÇÃO: " + _fmt(atencao) + " — ver recomendações na tabela.")
+    if _lista("Indeterminado"):
+        partes.append("VERIFICAÇÃO MANUAL NECESSÁRIA: " + _fmt(_lista("Indeterminado")) + ".")
+    if _lista("N/A"):
+        partes.append("NÃO SE APLICAM A ESTE MODELO: " + _fmt(_lista("N/A")) + ".")
+    corrigidos = [r for r in resultados if r.get("fonte_veredito") == "python"
+                  and r.get("status_llm_original") not in (None, "—")
+                  and classificar_status(r["status_llm_original"]) != classificar_status(r.get("status", ""))]
+    if corrigidos:
+        partes.append("STATUS DEFINIDO PELA VERIFICAÇÃO PYTHON (divergiu do LLM): " + "; ".join(
+            f"{r['item_nbr']} (LLM: {r['status_llm_original']} → Python: {r['status']})" for r in corrigidos) + ".")
+    return " ".join(partes)
 
 
 def classificar_prototipo(resultados_llm: list[dict]) -> dict:

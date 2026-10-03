@@ -34,7 +34,7 @@ from regras import obter_regras_lista
 from llm_auditor import build_audit_prompt, call_anthropic, call_gemini
 from verificacoes import (classificar_status, calcular_resumo,
                           gerar_verificacoes, comparar_com_llm,
-                          aplicar_veredito_python)
+                          aplicar_veredito_python, gerar_observacoes)
 from dashboard import render_aba_elementos, render_dashboard
 from visualizador_3d import extrair_malhas, render_aba_3d
 from relatorios import gerar_relatorio_html, gerar_excel
@@ -389,6 +389,11 @@ with tab_upload:
             # ter feito a soma/divisão certa (ver calcular_resumo() para o porquê).
             resultado["resumo"] = calcular_resumo(resultado.get("resultados", []))
             log("🧮 Resumo e metadados recalculados em Python (não dependem do eco do LLM).")
+
+            # Resumo executivo reescrito com os status FINAIS (o texto do LLM
+            # citava valores que o Python corrigiu — ex: bacia 0,81 m)
+            resultado["observacoes_llm_original"] = resultado.get("observacoes_gerais", "")
+            resultado["observacoes_gerais"] = gerar_observacoes(resultado["resultados"], resultado["resumo"])
             st.session_state.comparacao = comparacao
             resultado["verificacoes_por_elemento"] = st.session_state.verificacoes
             resultado["comparacao_llm_python"] = comparacao
