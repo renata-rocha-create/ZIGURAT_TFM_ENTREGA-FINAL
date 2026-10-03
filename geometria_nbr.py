@@ -243,11 +243,17 @@ def ambientes_da_porta(verts_porta, poligonos, dist_max=0.30):
 
 def triangulos_topo(verts, faces, nz_min=0.5):
     """
-    Triângulos da malha com a face voltada PARA CIMA (normal com z > nz_min).
-    São exatamente a superfície onde se pisa — funciona para lajes com
-    várias "ilhas" (ex: um IfcSlab cobrindo ACESSO e PORTARIA) e para lajes
-    inclinadas, onde um contorno único (casco convexo) erraria.
-    faces: lista plana de índices (como shape.geometry.faces do ifcopenshell).
+    Triângulos HORIZONTAIS (ou quase) da malha: |normal z| > nz_min.
+
+    Aceita face virada para cima OU para baixo de propósito: o sentido da
+    normal depende da ordem em que os vértices são listados (o "winding"),
+    e isso varia entre exportadores e versões do ifcopenshell. Se só
+    aceitássemos "para cima", uma laje com winding invertido seria lida pela
+    FACE DE BAIXO (ex: 15 mm de desnível falso) ou nem seria lida.
+    A face de cima é escolhida depois, em cota_no_ponto(), pela maior cota.
+
+    Funciona para lajes com várias "ilhas" (um IfcSlab cobrindo ACESSO e
+    PORTARIA) e para lajes inclinadas. faces: lista plana de índices.
     Devolve array (M, 3, 3).
     """
     v = np.asarray(verts, dtype=float).reshape(-1, 3)
@@ -260,29 +266,56 @@ def triangulos_topo(verts, faces, nz_min=0.5):
     ok = norma > 1e-12
     nz = np.zeros(len(t))
     nz[ok] = n[ok, 2] / norma[ok]
-    return t[nz > nz_min]
+    return t[np.abs(nz) > nz_min]
 
 
-def cota_no_ponto(tris, x, y, tol=1e-6):
+def _z_no_triangulo(t, x, y, tol=1e-6):
+    (x1, y1, z1), (x2, y2, z2), (x3, y3, z3) = t
+    det = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3)
+    if abs(det) < 1e-12:
+        return None
+    l1 = ((y2 - y3) * (x - x3) + (x3 - x2) * (y - y3)) / det
+    l2 = ((y3 - y1) * (x - x3) + (x1 - x3) * (y - y3)) / det
+    l3 = 1 - l1 - l2
+    if l1 >= -tol and l2 >= -tol and l3 >= -tol:
+        return l1 * z1 + l2 * z2 + l3 * z3
+    return None
+
+
+def cota_no_ponto(tris, x, y, raio=0.05):
     """
-    Cota do piso no ponto (x, y): procura o triângulo de topo que contém o
-    ponto e interpola a cota (coordenadas baricêntricas). Se houver mais de
-    uma laje sobreposta (estrutural + acabamento), fica com a MAIS ALTA,
-    que é o piso acabado. None se o ponto não está sobre nenhum triângulo.
+    Cota do piso no ponto (x, y): procura os triângulos horizontais que
+    contêm o ponto e interpola a cota (coordenadas baricêntricas). Fica com
+    a MAIS ALTA — é a face de cima (piso acabado), mesmo com lajes
+    sobrepostas (estrutural + acabamento) ou winding invertido.
+
+    Se nenhum triângulo contém o ponto, aceita os que estão a até `raio`
+    em planta (frestas de modelagem entre laje e parede), usando a cota do
+    ponto mais próximo do triângulo. None se não houver piso por perto.
     """
     melhor = None
     for t in tris:
-        (x1, y1, z1), (x2, y2, z2), (x3, y3, z3) = t
-        det = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3)
-        if abs(det) < 1e-12:
-            continue
-        l1 = ((y2 - y3) * (x - x3) + (x3 - x2) * (y - y3)) / det
-        l2 = ((y3 - y1) * (x - x3) + (x1 - x3) * (y - y3)) / det
-        l3 = 1 - l1 - l2
-        if l1 >= -tol and l2 >= -tol and l3 >= -tol:
-            z = l1 * z1 + l2 * z2 + l3 * z3
+        z = _z_no_triangulo(t, x, y)
+        if z is not None:
             melhor = z if melhor is None else max(melhor, z)
-    return melhor
+    if melhor is not None or raio <= 0:
+        return melhor
+
+    p = np.array([x, y], dtype=float)
+    candidatos = []
+    for t in tris:
+        d = min(_dist_ponto_segmento(p, t[i, :2], t[(i + 1) % 3, :2]) for i in range(3))
+        if d <= raio:
+            # cota no ponto do triângulo mais próximo (projeção na aresta mais próxima)
+            i = int(np.argmin([_dist_ponto_segmento(p, t[k, :2], t[(k + 1) % 3, :2]) for k in range(3)]))
+            a, b = t[i], t[(i + 1) % 3]
+            ab = b[:2] - a[:2]
+            u = 0.0 if not ab.any() else float(np.clip(np.dot(p - a[:2], ab) / np.dot(ab, ab), 0, 1))
+            candidatos.append((d, float(a[2] + u * (b[2] - a[2]))))
+    if not candidatos:
+        return None
+    dmin = min(c[0] for c in candidatos)
+    return max(z for d, z in candidatos if d <= dmin + 1e-3)
 
 
 def desnivel_na_porta(verts_porta, lajes_tris):

@@ -380,7 +380,21 @@ def _v_corrimao(escadas, rampas, corrimaos):
     return linhas
 
 
-def _v_desniveis(desniveis, chanfros):
+def _resumo_diag_lajes(diag):
+    """Uma linha por laje: o que a extração conseguiu ler (para depurar 'sem piso')."""
+    partes = []
+    for d in diag or []:
+        nome = (d.get("nome") or d.get("GlobalId") or "?").split(":")
+        nome = nome[1] if len(nome) >= 2 else nome[0]
+        if d.get("problema"):
+            partes.append(f"{nome[:30]}: {d['problema']}")
+        else:
+            partes.append(f"{nome[:30]}: {d.get('n_triangulos_horizontais')} faces horiz., "
+                          f"x {d.get('x')}, y {d.get('y')}, z {d.get('z')}")
+    return " | ".join(partes)
+
+
+def _v_desniveis(desniveis, chanfros, diag_lajes=None):
     """
     6.3.4 — desníveis medidos nos pontos de passagem (portas e juntas de piso).
       ≤ 5 mm       → Conforme (NBR: dispensa tratamento especial)
@@ -401,7 +415,8 @@ def _v_desniveis(desniveis, chanfros):
             linhas.append(_linha(el, "6.3.4", "—", exig, "Indeterminado", "geometria_lajes",
                                  f"Sem piso modelado de um dos lados da {onde} "
                                  f"(cotas lidas: {x.get('cota_lado_1_m')} / {x.get('cota_lado_2_m')} m; "
-                                 f"pontos testados: {x.get('sondas_xy')}). Verificar se há laje dos dois lados."))
+                                 f"pontos testados: {x.get('sondas_xy')}). Verificar se há laje dos dois lados. "
+                                 f"Lajes lidas: {_resumo_diag_lajes(diag_lajes)}"))
             continue
         medido = f"{mm:.1f} mm ({x.get('cota_lado_1_m')} / {x.get('cota_lado_2_m')} m)"
         if mm <= DESNIVEL_SEM_TRAT_MM + TOL_MODELAGEM_MM:
@@ -610,7 +625,7 @@ def gerar_verificacoes(elementos: dict) -> list[dict]:
     linhas += _v_lavatorios(c.get("lavatorios", []))
     linhas += _v_barras(c.get("barras", []))
     linhas += _v_macaneta(c.get("portas", []))
-    linhas += _v_desniveis(c.get("desniveis", []), c.get("chanfros", []))
+    linhas += _v_desniveis(c.get("desniveis", []), c.get("chanfros", []), c.get("diag_lajes", []))
     return linhas
 
 

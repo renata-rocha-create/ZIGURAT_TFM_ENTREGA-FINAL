@@ -12,6 +12,32 @@ from geometria_nbr import (poligono_planta, ambientes_da_porta, analisar_laje,
                            dist_ponto_poligono)
 
 
+def _criar_shape(geom, settings, el):
+    """
+    create_shape pedindo EXPLICITAMENTE a representação "Body" (o sólido 3D).
+
+    Por quê: um elemento pode ter várias representações — ex: a laje do WC
+    no BENCHMARK_00 tem "FootPrint" (contorno 2D em planta) listada ANTES da
+    "Body". Conforme a versão do ifcopenshell, a chamada sem representação
+    pode devolver o contorno 2D (só linhas, nenhuma face) — e aí a laje
+    "some" para as análises de piso. Analogia: pedir a peça certa da prancha
+    (o corte 3D) em vez de deixar o programa pegar a primeira folha da pasta.
+    Testado com ifcopenshell 0.8.0: mesma geometria nos dois modos.
+    """
+    body = None
+    try:
+        reps = el.Representation.Representations if el.Representation else []
+        body = next((r for r in reps if (r.RepresentationIdentifier or "") == "Body"), None)
+    except Exception:
+        body = None
+    if body is not None:
+        try:
+            return geom.create_shape(settings, el, body)
+        except Exception:
+            pass
+    return geom.create_shape(settings, el)
+
+
 def _pavimento(el):
     """
     Sobe a hierarquia espacial do IFC até achar o IfcBuildingStorey.
@@ -187,7 +213,7 @@ def extract_ifc_elements(ifc_path: str) -> dict:
         gid = el.GlobalId
         if gid not in _cache_malha:
             try:
-                sh = _gm.create_shape(_gsm, el)
+                sh = _criar_shape(_gm, _gsm, el)
                 v = _npm.array(sh.geometry.verts, dtype=float).reshape(-1, 3)
                 f = _npm.array(sh.geometry.faces, dtype=int)
                 _cache_malha[gid] = (v, f) if len(v) else (None, None)
@@ -356,7 +382,7 @@ def extract_ifc_elements(ifc_path: str) -> dict:
             import numpy as np
             gset = ifcopenshell.geom.settings()
             gset.set(gset.USE_WORLD_COORDS, True)
-            shape = ifcopenshell.geom.create_shape(gset, el)
+            shape = _criar_shape(ifcopenshell.geom, gset, el)
             verts = np.array(shape.geometry.verts).reshape(-1, 3)
 
             x_range = verts[:, 0].max() - verts[:, 0].min()
@@ -673,7 +699,7 @@ def extract_ifc_elements(ifc_path: str) -> dict:
 
                 # ── Análise geométrica com ifcopenshell.geom + Shapely ──
                 try:
-                    shape = ifcopenshell.geom.create_shape(geom_settings, el)
+                    shape = _criar_shape(ifcopenshell.geom, geom_settings, el)
                     verts = np.array(shape.geometry.verts).reshape(-1, 3)
                     z_min = verts[:, 2].min()
 
@@ -900,7 +926,7 @@ def extract_ifc_elements(ifc_path: str) -> dict:
         if _gs is None:
             return None
         try:
-            sh = _geom.create_shape(_gs, el)
+            sh = _criar_shape(_geom, _gs, el)
             v = _np.array(sh.geometry.verts, dtype=float).reshape(-1, 3)
             if not len(v):
                 return None
@@ -995,15 +1021,26 @@ def extract_ifc_elements(ifc_path: str) -> dict:
     # emenda de piso — em vez de comparar a "cota média" de lajes inteiras.
     desniveis = []
     _lajes = []
+    diag_lajes = []   # diagnóstico: o que a extração conseguiu ler de cada laje
     for el in ifc.by_type("IfcSlab"):
         _v, _f = _malha(el)
+        diag = {"GlobalId": el.GlobalId, "nome": el.Name}
         if _v is None:
+            diag["problema"] = "ifcopenshell não gerou geometria"
+            diag_lajes.append(diag)
             continue
         try:
-            _lajes.append({"id": el.GlobalId, "nome": el.Name, "verts": _v,
-                           "tris": triangulos_topo(_v, _f)})
-        except Exception:
-            pass
+            tris = triangulos_topo(_v, _f)
+            _lajes.append({"id": el.GlobalId, "nome": el.Name, "verts": _v, "tris": tris})
+            diag.update({"n_vertices": int(len(_v)), "n_triangulos_horizontais": int(len(tris)),
+                         "x": [round(float(_v[:, 0].min()), 3), round(float(_v[:, 0].max()), 3)],
+                         "y": [round(float(_v[:, 1].min()), 3), round(float(_v[:, 1].max()), 3)],
+                         "z": [round(float(_v[:, 2].min()), 3), round(float(_v[:, 2].max()), 3)]})
+            if not len(tris):
+                diag["problema"] = "geometria sem faces horizontais"
+        except Exception as e_l:
+            diag["problema"] = f"erro ao triangular: {str(e_l)[:60]}"
+        diag_lajes.append(diag)
     _tris = [l["tris"] for l in _lajes if len(l["tris"])]
 
     if _tris:
@@ -1057,6 +1094,7 @@ def extract_ifc_elements(ifc_path: str) -> dict:
             chanfros.append(info_basica(el, "IfcBuildingElementProxy(chanfro)"))
     resultado["elementos"]["Desniveis_pisos"] = desniveis[:40]
     resultado["elementos"]["Chanfros"] = chanfros[:20]
+    resultado["diagnostico_lajes"] = diag_lajes
     resultado["nota_desniveis"] = (
         f"{len(desniveis)} pontos de passagem medidos (portas e juntas de lajes). "
         f"NBR 9050 6.3.4: até 5 mm dispensa tratamento; 5–20 mm exige chanfro 1:2; "
@@ -1083,7 +1121,7 @@ def extract_ifc_elements(ifc_path: str) -> dict:
         "portas": portas, "rampas": rampas, "escadas": escadas,
         "corrimaos": corrimaos, "espacos": espacos, "bacias": bacias,
         "lavatorios": lavatórios, "barras": barras, "janelas": janelas,
-        "desniveis": desniveis, "chanfros": chanfros,
+        "desniveis": desniveis, "chanfros": chanfros, "diag_lajes": diag_lajes,
     }
 
     return limpar_nulos(resultado)
