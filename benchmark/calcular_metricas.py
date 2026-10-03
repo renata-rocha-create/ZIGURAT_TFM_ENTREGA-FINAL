@@ -24,8 +24,17 @@ Uso: python benchmark/calcular_metricas.py [--resultados ...] [--saida ...]
 """
 import argparse
 import csv
+import sys
 from collections import defaultdict
 from pathlib import Path
+
+# Terminal do Windows: aceitar acentos e setas nas mensagens sem travar
+for _fluxo in (sys.stdout, sys.stderr):
+    try:
+        _fluxo.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 
 AQUI = Path(__file__).resolve().parent
 NEG = {"Conforme", "N/A"}

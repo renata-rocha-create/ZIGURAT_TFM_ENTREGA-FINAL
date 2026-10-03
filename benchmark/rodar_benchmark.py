@@ -29,6 +29,13 @@ from extracao import extract_ifc_elements                      # noqa: E402
 from verificacoes import (gerar_verificacoes, status_item_python,  # noqa: E402
                           classificar_status, aplicar_veredito_python)
 
+# Terminal do Windows: aceitar acentos e setas nas mensagens sem travar
+for _fluxo in (sys.stdout, sys.stderr):
+    try:
+        _fluxo.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 
 def _norm(i):
     return str(i).replace("–", "-").replace("—", "-").replace(" ", "")
@@ -79,7 +86,7 @@ def main():
         chamar = lambda elem, nome: fn(chave, a.modelo, build_audit_prompt(elem, nome), a.temperatura)  # noqa: E731
 
     linhas_saida = []
-    for v in variantes:
+    for n_v, v in enumerate(variantes, 1):
         caminho = Path(a.variantes) / f"{v}.ifc"
         if not caminho.exists():
             print(f"{v}: arquivo não encontrado — pulando"); continue
@@ -104,7 +111,7 @@ def main():
                                              for l in linhas if _norm(l["item_nbr"]) == _norm(item)
                                              and l["status"] != "Conforme"),
             })
-        print(f"{v}: ok ({time.time() - t0:.1f}s)")
+        print(f"[{n_v}/{len(variantes)}] {v}: ok ({time.time() - t0:.1f}s)", flush=True)
 
     with open(a.saida, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=list(linhas_saida[0].keys()))

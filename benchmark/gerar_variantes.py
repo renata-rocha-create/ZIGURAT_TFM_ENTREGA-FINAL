@@ -19,12 +19,21 @@ qualquer instalação.
 """
 import argparse
 import csv
+import sys
 import math
 import shutil
 from datetime import datetime
 from pathlib import Path
 
 import ifcopenshell
+
+# Terminal do Windows: aceitar acentos e setas nas mensagens sem travar
+for _fluxo in (sys.stdout, sys.stderr):
+    try:
+        _fluxo.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 
 AQUI = Path(__file__).resolve().parent
 

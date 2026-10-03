@@ -31,6 +31,14 @@ AQUI = Path(__file__).resolve().parent
 sys.path.insert(0, str(AQUI.parent))
 from verificacoes import status_item_python  # noqa: E402  (regra de agregação do próprio auditor)
 
+# Terminal do Windows: aceitar acentos e setas nas mensagens sem travar
+for _fluxo in (sys.stdout, sys.stderr):
+    try:
+        _fluxo.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+
 # (1) Inventário do modelo-base BENCHMARK_00_3: elementos avaliados por item (Y)
 Y = {
     "6.6": 1,      # 1 rampa (IfcSlab inclinado)
