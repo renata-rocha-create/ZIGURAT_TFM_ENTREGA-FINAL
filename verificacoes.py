@@ -530,13 +530,63 @@ def status_item_python(linhas_item: list[dict]):
     if not linhas_item:
         return None
     st_ = [l["status"] for l in linhas_item]
-    aval = [s for s in st_ if s in ("Conforme", "Não Conforme")]
+    aval = [s for s in st_ if s in ("Conforme", "Não Conforme", "Parcial")]
     if not aval:
         return "N/A" if all(s == "N/A" for s in st_) else "Indeterminado"
-    x, y = aval.count("Conforme"), len(aval)
-    if x == y: return "Conforme"
-    if x == 0: return "Não Conforme"
+    if all(s == "Conforme" for s in aval): return "Conforme"
+    if all(s == "Não Conforme" for s in aval): return "Não Conforme"
     return "Parcial"
+
+
+def aplicar_veredito_python(resultados_llm: list[dict], linhas: list[dict]) -> list[dict]:
+    """
+    O PYTHON DÁ A PALAVRA FINAL nos itens numéricos.
+
+    Analogia: o LLM é o "estagiário" que escreve o rascunho do laudo; o Python
+    é o "engenheiro responsável" que mede com trena e assina. Se os dois
+    discordam num item numérico (ex: altura da bacia), vale a medição do Python.
+
+    Sem isto, o relatório HTML mostrava o status do LLM — que lia a altura
+    TOTAL da bacia com caixa acoplada (0,81 m) e marcava Não Conforme, mesmo
+    com o Python já descontando o tanque (rim = 0,435 m → Conforme).
+
+    Itens qualitativos (texto) continuam com o LLM. O status original do LLM
+    fica guardado em "status_llm_original" para a comparação da dissertação.
+    """
+    def _norm(i):
+        return str(i).replace("–", "-").replace("—", "-").replace(" ", "")
+
+    resultados = [dict(r) for r in (resultados_llm or [])]
+    por_item = {}
+    for l in linhas or []:
+        por_item.setdefault(l["item_nbr"], []).append(l)
+
+    for item, ls in por_item.items():
+        if item in ITENS_QUALITATIVOS:
+            continue
+        st_py = status_item_python(ls)
+        if st_py is None:
+            continue
+        medidos  = "; ".join(f"{(l['nome'] or '—')[:40]}: {l['valor_medido']}" for l in ls)
+        mensagens = " | ".join(f"[{l['global_id']}] {l['mensagem']}" for l in ls if l.get("mensagem"))
+        novo = {
+            "status": st_py,
+            "valor_encontrado": medidos,
+            "valor_exigido": ls[0]["valor_exigido"],
+            "elemento": ", ".join(sorted({(l['nome'] or '—')[:40] for l in ls})),
+            "globalid": ", ".join(l["global_id"] or "" for l in ls),
+            "tipo_ifc": ", ".join(sorted({l["ifc_class"] or "" for l in ls})),
+            "recomendacao": f"[Verificação Python] {mensagens}",
+            "fonte_veredito": "python",
+        }
+        alvo = next((r for r in resultados if _norm(r.get("item_nbr")) == _norm(item)), None)
+        if alvo is None:
+            resultados.append({"item_nbr": item, "categoria": CATEGORIAS.get(item, ""),
+                               "status_llm_original": "—", **novo})
+        else:
+            alvo["status_llm_original"] = alvo.get("status", "—")
+            alvo.update(novo)
+    return resultados
 
 
 def comparar_com_llm(linhas: list[dict], resultados_llm: list[dict]) -> dict:

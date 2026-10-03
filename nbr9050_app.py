@@ -33,7 +33,8 @@ from extracao import extract_ifc_elements
 from regras import obter_regras_lista
 from llm_auditor import build_audit_prompt, call_anthropic, call_gemini
 from verificacoes import (classificar_status, calcular_resumo,
-                          gerar_verificacoes, comparar_com_llm)
+                          gerar_verificacoes, comparar_com_llm,
+                          aplicar_veredito_python)
 from dashboard import render_aba_elementos, render_dashboard
 from visualizador_3d import extrair_malhas, render_aba_3d
 from relatorios import gerar_relatorio_html, gerar_excel
@@ -375,13 +376,19 @@ with tab_upload:
             resultado["schema_ifc"] = elementos.get("schema", resultado.get("schema_ifc", "—"))
             resultado["data_auditoria"] = datetime.now().strftime("%d/%m/%Y")
 
+            # Comparação item a item: status ORIGINAL do LLM × status calculado em Python
+            # (feita ANTES do veredito final, para a métrica de concordância ser honesta)
+            comparacao = comparar_com_llm(st.session_state.verificacoes, resultado.get("resultados", []))
+
+            # Veredito final: nos itens numéricos, o Python sobrescreve o LLM no relatório
+            resultado["resultados"] = aplicar_veredito_python(
+                resultado.get("resultados", []), st.session_state.verificacoes)
+            log("⚖️ Itens numéricos: status final definido pela verificação em Python.")
+
             # Recalcula o resumo em Python — determinístico, não depende do LLM
             # ter feito a soma/divisão certa (ver calcular_resumo() para o porquê).
             resultado["resumo"] = calcular_resumo(resultado.get("resultados", []))
             log("🧮 Resumo e metadados recalculados em Python (não dependem do eco do LLM).")
-
-            # Comparação item a item: status do LLM × status calculado em Python
-            comparacao = comparar_com_llm(st.session_state.verificacoes, resultado.get("resultados", []))
             st.session_state.comparacao = comparacao
             resultado["verificacoes_por_elemento"] = st.session_state.verificacoes
             resultado["comparacao_llm_python"] = comparacao
