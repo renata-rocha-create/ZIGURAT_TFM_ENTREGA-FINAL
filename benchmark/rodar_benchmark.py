@@ -79,7 +79,9 @@ def main():
         if not a.modelo:
             sys.exit("--modelo é obrigatório com --llm")
         from llm_auditor import build_audit_prompt, call_anthropic, call_gemini
-        chave = os.environ.get("ANTHROPIC_API_KEY" if a.llm == "anthropic" else "GOOGLE_API_KEY")
+        # .strip(): uma chave colada com espaço no começo/fim quebra o cabeçalho
+        # HTTP e aparece só como "Connection error" (aconteceu na 1ª rodada).
+        chave = (os.environ.get("ANTHROPIC_API_KEY" if a.llm == "anthropic" else "GOOGLE_API_KEY") or "").strip()
         if not chave:
             sys.exit("defina ANTHROPIC_API_KEY / GOOGLE_API_KEY no ambiente")
         fn = call_anthropic if a.llm == "anthropic" else call_gemini
