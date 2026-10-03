@@ -198,6 +198,28 @@ def _v_portas(portas):
     return linhas
 
 
+TERMOS_PROP_FERRAGEM = ["ferrage", "maçaneta", "macaneta", "puxador", "fechadura", "handle", "hardware", "lever"]
+
+
+def _textos_ferragem(p):
+    """
+    Onde procurar o tipo de maçaneta, em ordem:
+      1) Name / ObjectType / Description da porta;
+      2) propriedades de FERRAGEM nos Psets da instância e do TIPO da porta
+         (só as que têm "ferragem", "maçaneta", "puxador", "fechadura",
+         "handle"... no NOME da propriedade — evita falsos positivos como
+         "round" dentro de "background").
+    Devolve lista de (origem, texto).
+    """
+    achados = [("nome", " ".join(str(p.get(k) or "") for k in ("Name", "ObjectType", "Description")))]
+    for chave, rotulo in (("Psets", "Pset da porta"), ("Psets_tipo", "Pset do tipo")):
+        for pset, props in (p.get(chave) or {}).items():
+            for nome_prop, valor in (props or {}).items():
+                if isinstance(valor, str) and any(t in str(nome_prop).lower() for t in TERMOS_PROP_FERRAGEM):
+                    achados.append((f"{rotulo} '{pset}' → {nome_prop}", valor))
+    return achados
+
+
 def _v_macaneta(portas):
     linhas = []
     for p in portas:
@@ -205,14 +227,19 @@ def _v_macaneta(portas):
             continue  # escopo: só portas que dão acesso a ambiente PNE/PCD
         amb = p.get("ambientes_adjacentes")
         onde = f" Porta entre: {' ↔ '.join(amb)}." if amb else ""
-        texto = " ".join(str(p.get(k) or "") for k in ("Name", "ObjectType", "Description")).lower()
-        if any(t in texto for t in TERMOS_MACANETA_NOK):
-            st_, msg = "Não Conforme", "Nome indica maçaneta esférica/giratória."
-        elif any(t in texto for t in TERMOS_MACANETA_OK):
-            st_, msg = "Conforme", "Nome indica maçaneta tipo alavanca."
-        else:
-            st_, msg = "Indeterminado", "Tipo de maçaneta não informado no nome/descrição."
-        linhas.append(_linha(p, "4.6.6", "(texto)", "Maçaneta tipo alavanca", st_, "texto_nome", msg + onde))
+        st_, msg, fonte, medido = "Indeterminado", "Tipo de maçaneta não informado no nome nem nos Psets de ferragem (instância e tipo).", "texto_nome", "(sem informação)"
+        for origem, texto in _textos_ferragem(p):
+            t = texto.lower()
+            if any(x in t for x in TERMOS_MACANETA_NOK):
+                st_, msg = "Não Conforme", f"{origem}: \"{texto}\" indica maçaneta esférica/giratória."
+            elif any(x in t for x in TERMOS_MACANETA_OK):
+                st_, msg = "Conforme", f"{origem}: \"{texto}\" indica maçaneta tipo alavanca."
+            else:
+                continue
+            fonte = "texto_nome" if origem == "nome" else "pset_ferragem"
+            medido = f"\"{texto[:60]}\""
+            break
+        linhas.append(_linha(p, "4.6.6", medido, "Maçaneta tipo alavanca", st_, fonte, msg + onde))
     return linhas
 
 

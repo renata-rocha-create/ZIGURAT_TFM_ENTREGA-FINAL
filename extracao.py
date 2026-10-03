@@ -148,6 +148,45 @@ def extract_ifc_elements(ifc_path: str) -> dict:
             pass
         return psets
 
+    def psets_do_tipo(el):
+        """
+        Psets do TIPO do elemento (IfcDoorType, IfcWindowType...) — no Revit,
+        os "Type Parameters". Ex: no BENCHMARK_00 a especificação da maçaneta
+        está só no tipo da porta: Pset "Identity Data(Type)", propriedade
+        "Ferragens" = "fechadura e maçaneta alavanca".
+        IFC4: el.IsTypedBy | IFC2X3: IfcRelDefinesByType dentro de IsDefinedBy.
+        """
+        tipos = []
+        try:
+            for rel in getattr(el, "IsTypedBy", None) or []:
+                tipos.append(rel.RelatingType)
+        except Exception:
+            pass
+        try:
+            for rel in getattr(el, "IsDefinedBy", None) or []:
+                if rel.is_a("IfcRelDefinesByType"):
+                    tipos.append(rel.RelatingType)
+        except Exception:
+            pass
+        psets = {}
+        for t in tipos:
+            try:
+                for pdef in getattr(t, "HasPropertySets", None) or []:
+                    if not pdef.is_a("IfcPropertySet"):
+                        continue
+                    props = {}
+                    for prop in getattr(pdef, "HasProperties", []) or []:
+                        try:
+                            nv = getattr(prop, "NominalValue", None)
+                            props[prop.Name] = nv.wrappedValue if nv is not None else None
+                        except Exception:
+                            pass
+                    if props:
+                        psets.setdefault(pdef.Name, props)
+            except Exception:
+                pass
+        return psets
+
     def info_basica(el, tipo_ifc=None):
         return {
             "GlobalId":    el.GlobalId,
@@ -319,6 +358,7 @@ def extract_ifc_elements(ifc_path: str) -> dict:
         d["OverallHeight_m"] = round(float(oh), 3) if oh else None
         d["OverallWidth_m"]  = round(float(ow), 3) if ow else None
         d["Psets"] = todos_psets(el)
+        d["Psets_tipo"] = psets_do_tipo(el)   # 4.6.6: especificação de ferragens costuma estar no tipo
 
         nome_porta = (getattr(el, "Name", "") or "").lower() + " " + (getattr(el, "ObjectType", "") or "").lower()
 
