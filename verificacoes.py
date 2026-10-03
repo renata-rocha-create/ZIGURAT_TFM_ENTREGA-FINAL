@@ -342,6 +342,13 @@ def _v_corrimao(escadas, rampas, corrimaos):
     """
     5.4.3 — corrimão nos dois lados, a 0,70 e 0,92 m, quando desnível > 0,19 m.
 
+    Quando é obrigatório:
+      RAMPA (i ≥ 5%)  → SEMPRE, em ambos os lados, qualquer que seja o desnível
+                        (NBR 9050: toda rampa tem corrimão de duas alturas);
+      i < 5%          → não é rampa pela NBR → N/A (corrimãos encontrados
+                        aparecem como informação);
+      ESCADA          → desnível > 0,19 m (critério do nbr9050_rules.json).
+
     Rampas: usa a associação GEOMÉTRICA feita na extração (corrimaos_associados):
     corrimão ao lado da rampa, lado (esquerdo/direito), alturas medidas a partir
     da SUPERFÍCIE da rampa e se ele acompanha a inclinação.
@@ -350,7 +357,7 @@ def _v_corrimao(escadas, rampas, corrimaos):
     linhas = []
     tem_railing = len(corrimaos) > 0
     tem_duplo = any(c.get("corrimao_duplo_070_092") for c in corrimaos)
-    exig = f"Corrimão 2 lados, 0,70 e 0,92 m, se desnível > {DESNIVEL_CORRIMAO:.2f} m"
+    exig = f"Escada: corrimão 2 lados, 0,70 e 0,92 m, se desnível > {DESNIVEL_CORRIMAO:.2f} m"
 
     for e in [e for e in escadas if e.get("tipo_ifc") == "IfcStairFlight"]:
         d = _num(e.get("desnivel_m"))
@@ -378,17 +385,18 @@ def _v_corrimao(escadas, rampas, corrimaos):
         medido = (f"desnível={d:.2f} m" if d is not None else "desnível=—") + \
                  (f" | {len(set(c['lado'] for c in assoc))} lado(s) com corrimão" if assoc else "")
 
-        if d is None:
-            linhas.append(_linha(r, "5.4.3", medido, exig, "Indeterminado", fonte, "Desnível não calculável."))
-            continue
-        if d <= DESNIVEL_CORRIMAO:
-            msg = f"Desnível {d:.2f} m ≤ 0,19 m: corrimão não obrigatório por este item."
-            if incl is not None and incl < RAMPA_I_MIN:
-                msg += f" Inclinação {incl:.2f}% < 5% (não é rampa pela NBR)."
+        exig_r = "Rampa (i ≥ 5%): corrimão nos 2 lados, 0,70 e 0,92 m, paralelo à rampa"
+        if incl is not None and incl < RAMPA_I_MIN:
+            msg = (f"Inclinação {incl:.2f}% < 5%: pela NBR 9050 não é rampa — corrimão não obrigatório.")
             if info:
                 msg += f" Corrimãos encontrados (informativo): {info}."
-            linhas.append(_linha(r, "5.4.3", medido, exig, "N/A", fonte, msg))
+            linhas.append(_linha(r, "5.4.3", medido, exig_r, "N/A", fonte, msg))
             continue
+        if incl is None:
+            linhas.append(_linha(r, "5.4.3", medido, exig_r, "Indeterminado", fonte,
+                                 "Inclinação não calculável — não dá para saber se é rampa."))
+            continue
+        exig = exig_r
         if assoc is None:
             linhas.append(_linha(r, "5.4.3", medido, exig,
                                  "Indeterminado" if not tem_railing else ("Conforme" if tem_duplo else "Não Conforme"),

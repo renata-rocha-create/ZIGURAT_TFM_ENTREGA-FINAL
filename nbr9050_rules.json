@@ -110,7 +110,7 @@
     {
       "item_nbr": "5.4.3",
       "subcategoria": "Corrimão",
-      "item_verificavel": "Corrimão em ambos os lados de rampas e escadas; alturas 0,70m e 0,92m — obrigatório se desnível > 0,19m",
+      "item_verificavel": "Corrimão em ambos os lados, alturas 0,70m e 0,92m — obrigatório em TODA rampa (inclinação ≥ 5%) e em escadas com desnível > 0,19m",
       "classificacao": "Condicional",
       "entidades": {
         "primaria": "IfcRailing",
@@ -120,7 +120,7 @@
         "primaria": "Identificar IfcRailing associado a IfcRamp ou IfcStair; verificar ambos os lados; extrair altura",
         "fallback": "Buscar IfcBuildingElementProxy com Name/ObjectType contendo 'corrimão' ou 'handrail'"
       },
-      "prompt_llm": "Você é um verificador de conformidade NBR 9050:2020 (item 5.4.3). Nos elementos fornecidos, localize IfcStair e IfcRamp. Para cada um, calcule o desnível total (NumberOfRisers × RiserHeight ou OverallRise). Se desnível ≤ 0,19m → 'N/A'. Se > 0,19m, verifique: (a) IfcRailing presente em ambos os lados; (b) altura 0,70m e 0,92m. FALLBACK: busque IfcBuildingElementProxy com 'corrimão' ou 'handrail' no Name/ObjectType. Sem nenhum elemento de corrimão → Indeterminado com recomendação de verificação in loco. CRITÉRIO PARA 'Parcial': se houver MAIS DE UM elemento avaliado neste item, conte quantos atendem ao critério (X) do total (Y). Se X=Y (100%) → 'Conforme'. Se X=0 (0%) → 'Não Conforme'. Se 0<X<Y → 'Parcial', e escreva explicitamente 'X de Y elementos conformes' em valor_encontrado, citando os GlobalIds dos elementos NÃO conformes na recomendação. Não arredonde X/Y parcial para 'Conforme' nem para 'Não Conforme'.",
+      "prompt_llm": "Você é um verificador de conformidade NBR 9050:2020 (item 5.4.3). Nos elementos fornecidos, localize IfcStair e IfcRamp. RAMPAS (inclusive IfcSlab detectado como rampa): se inclinação ≥ 5% o corrimão é SEMPRE obrigatório, qualquer que seja o desnível; se inclinação < 5% não é rampa → 'N/A'. ESCADAS: calcule o desnível total (NumberOfRisers × RiserHeight); se ≤ 0,19m → 'N/A'. Quando obrigatório, verifique: (a) IfcRailing presente em ambos os lados; (b) altura 0,70m e 0,92m. FALLBACK: busque IfcBuildingElementProxy com 'corrimão' ou 'handrail' no Name/ObjectType. Sem nenhum elemento de corrimão → Indeterminado com recomendação de verificação in loco. CRITÉRIO PARA 'Parcial': se houver MAIS DE UM elemento avaliado neste item, conte quantos atendem ao critério (X) do total (Y). Se X=Y (100%) → 'Conforme'. Se X=0 (0%) → 'Não Conforme'. Se 0<X<Y → 'Parcial', e escreva explicitamente 'X de Y elementos conformes' em valor_encontrado, citando os GlobalIds dos elementos NÃO conformes na recomendação. Não arredonde X/Y parcial para 'Conforme' nem para 'Não Conforme'.",
       "status_validacao_possiveis": [
         "Conforme",
         "Não Conforme",
