@@ -275,11 +275,11 @@ def aba_alarmes_llm(wb, ult1, ult2):
     cabecalho(ws, 4, ["Item NBR", "FP estrito v1", "FP estrito v2", "FP amplo v1", "FP amplo v2",
                       "FN estrito v2", "FP final v2 (amplo)", "Causa provável (LLM)"])
     causas = {
-        "7.7.2.1": "Sem altura explícita da bacia no texto, o LLM marca Indeterminado/Parcial; o Python lê a geometria.",
+        "7.7.2.1": "O LLM declara Não Conforme a bacia correta (28 de 28 pares): lê o ponto de inserção/cotas do texto como altura errada; o Python mede o topo da geometria.",
         "4.6.6": "Maçaneta tipo alavanca está nos Psets do TIPO da porta, que o prompt não inclui → Indeterminado.",
         "7.6-7.8": "Regras de barra por tipo (A, A1, lavatório) exigem cotas 3D; o LLM tende a Parcial.",
         "6.3.4": "Desnível de 5 mm no piso: o LLM hesita entre tolerância e falha → Indeterminado.",
-        "6.6": "Inclinação calculada pelo Python (laje inclinada); o LLM às vezes não reconhece a rampa.",
+        "6.6": "O LLM declara Não Conforme a rampa correta em 14 pares (erra a inclinação a partir do texto); o Python calcula pela laje inclinada.",
         "6.11.3": "Caso isolado (variação de uma rodada).",
         "7.7.1": "W01: o LLM associou o ambiente reduzido à área de transferência (ambíguo).",
     }

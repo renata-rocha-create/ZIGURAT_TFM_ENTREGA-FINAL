@@ -63,7 +63,7 @@ Ambiente: computador do projeto (Windows, Python 3.12, ifcopenshell 0.9.0), LLM 
 - **Acurácia de status exato** (com a errata): Python 0,994 · LLM 0,675 · final 0,992.
 - **Ganho da arquitetura híbrida** ("LLM traduz, Python julga"): no critério estrito, a precisão sobe de 0,289 (LLM sozinho) para 0,964 e os alarmes falsos caem de 64 para 1.
 - **Python sem nenhum alarme falso.** Os 4 quase-erros (porta 0,81 m, peitoril 1,21 m, rampa 8,0%, desnível 3 mm) e a base saíram Conforme.
-- **Alarmes falsos do LLM** (critério amplo, 107) concentram-se em 4.6.6 (27), 7.7.2.1 (28), 7.6-7.8 (19), 6.3.4 (17) e 6.6 (14). Quase todos são "Indeterminado" ou "Parcial" em itens que dependem de cotas 3D ou de Psets do tipo da porta, que o texto enviado ao LLM não traz. O Python corrige todos eles na camada final.
+- **Alarmes falsos do LLM** (critério amplo, 107) concentram-se em 7.7.2.1 (28), 4.6.6 (27), 7.6-7.8 (19), 6.3.4 (17) e 6.6 (14). Por tipo: 44 "Não Conforme" (bacia e rampa corretas lidas como erradas), 43 "Indeterminado" (maçaneta e desnível, dados que o texto enviado ao LLM não traz explícitos) e 20 "Parcial" (barras). O Python corrige todos na camada final, exceto o W01/7.7.1, item que ele não mede.
 
 ### Erros que restam na camada final
 
