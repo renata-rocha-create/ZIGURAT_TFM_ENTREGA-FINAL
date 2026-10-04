@@ -47,25 +47,42 @@ Essa diferença só foi percebida depois da primeira execução. Para não ajust
 
 Uma conferência independente recalculou todas as métricas a partir dos CSVs e encontrou os mesmos valores.
 
-## Resultados: camada Python (2026-10-03)
+## Resultados — rodada v2 (referência, 03/10/2026)
 
-| Critério | n | VP | FP | FN | VN | Acurácia | Precisão | Recall | F1 |
-|---|---|---|---|---|---|---|---|---|---|
-| Estrito | 328 | 27 | 0 | 2 | 299 | 0,994 | **1,000** | 0,931 | 0,964 |
-| Amplo | 330 | 30 | 0 | 1 | 299 | 0,997 | **1,000** | 0,968 | 0,984 |
+Ambiente: computador do projeto (Windows, Python 3.12, ifcopenshell 0.9.0), LLM `claude-sonnet-4-5` com temperatura 0. Os números abaixo estão em `metricas.csv` e são recalculados por fórmula em `benchmark_resultados.xlsx`.
 
-- Acurácia de status exato: 0,952 com o gabarito original e 0,994 com a errata.
-- **Nenhum alarme falso.** Os 4 quase-erros (porta 0,81 m, peitoril 1,21 m, rampa 8,0%, desnível 3 mm) e a base saíram Conforme.
-- Recall 1,000 em 9 dos 11 itens medidos pelo Python. As exceções:
+| Camada | Critério | n | VP | FP | FN | VN | Acurácia | Precisão | Recall | F1 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Python | Estrito | 328 | 27 | 0 | 2 | 299 | 0,994 | **1,000** | 0,931 | 0,964 |
+| Python | Amplo | 330 | 30 | 0 | 1 | 299 | 0,997 | **1,000** | 0,968 | 0,984 |
+| LLM sozinho | Estrito | 358 | 26 | 64 | 3 | 265 | 0,813 | 0,289 | 0,897 | 0,437 |
+| LLM sozinho | Amplo | 360 | 31 | 107 | 0 | 222 | 0,703 | 0,225 | 1,000 | 0,367 |
+| **Final (relatório)** | Estrito | 358 | 27 | 1 | 2 | 328 | 0,992 | **0,964** | 0,931 | 0,947 |
+| **Final (relatório)** | Amplo | 360 | 30 | 1 | 1 | 328 | 0,994 | **0,968** | 0,968 | 0,968 |
+
+- **Acurácia de status exato** (com a errata): Python 0,994 · LLM 0,675 · final 0,992.
+- **Ganho da arquitetura híbrida** ("LLM traduz, Python julga"): no critério estrito, a precisão sobe de 0,289 (LLM sozinho) para 0,964 e os alarmes falsos caem de 64 para 1.
+- **Python sem nenhum alarme falso.** Os 4 quase-erros (porta 0,81 m, peitoril 1,21 m, rampa 8,0%, desnível 3 mm) e a base saíram Conforme.
+- **Alarmes falsos do LLM** (critério amplo, 107) concentram-se em 4.6.6 (27), 7.7.2.1 (28), 7.6-7.8 (19), 6.3.4 (17) e 6.6 (14). Quase todos são "Indeterminado" ou "Parcial" em itens que dependem de cotas 3D ou de Psets do tipo da porta, que o texto enviado ao LLM não traz. O Python corrige todos eles na camada final.
+
+### Erros que restam na camada final
 
 | Variante | Item | Esperado | Obtido | Causa |
 |---|---|---|---|---|
 | S01 | 7.7.2.1 | Não Conforme | Indeterminado | Regra de projeto: borda da bacia fora de 0,41–0,47 m vira "verificar in loco", nunca Não Conforme. É FN no critério estrito e acerto no amplo. |
 | S02 | 7.6-7.8 | Parcial | Conforme | Barra de fundo a 3,2 cm da tampa (mínimo 4 cm) aceita pela tolerância de modelagem de 1 cm (`TOL_BARRA_CONF`). É FN nos dois critérios. |
+| W01 | 7.7.1 | Conforme | Não Conforme | O Python não mede o 7.7.1, então vale o LLM. A mutação reduziu o ambiente (giro ⌀1,50 m) e o LLM ligou isso à área de transferência. O caso é ambíguo. |
 
-Os dois falsos negativos vêm de **decisões de tolerância**, não de erros de medição. Os valores medidos (0,495 m e 0,032 m) estão corretos.
+Os dois FN do Python vêm de **decisões de tolerância**, não de erros de medição: os valores medidos (0,495 m e 0,032 m) estão corretos.
 
-Arquivos: `resultados.csv`, `metricas.csv` (inclui as métricas por item) e `erros_auditor.csv`.
+**Sensibilidade.** Sem o par W01/7.7.1, a camada final fica com precisão 1,000 nos dois critérios (recall 0,931 estrito / 0,968 amplo).
+
+### Repetibilidade (v1 × v2)
+
+- **LLM:** respondeu igual em 331 de 360 pares (**91,9%**), mesmo com temperatura 0. As divergências concentram-se em 6.3.4 (12) e 6.6 (9).
+- **Python:** igual em 359 de 360 pares. A única mudança (S02/7.7.2.1) é a correção do código descrita abaixo, não variação aleatória.
+
+Arquivos: `resultados.csv`, `metricas.csv` (inclui as métricas por item), `erros_auditor.csv` e `benchmark_resultados.xlsx` (gerada por `montar_planilha.py`).
 
 ## Bug encontrado pelo próprio benchmark (rodada v1 → v2)
 
@@ -84,8 +101,9 @@ Na rodada v2, a S02 sai Parcial e a S01 sai Indeterminado pela regra de tolerân
 
 ## Limitações
 
-- **Camada LLM ainda não medida.** O comando está abaixo e precisa da chave de API.
-- **Ambiente de teste.** Os resultados acima foram gerados em um ambiente com ifcopenshell 0.8.0 e sem a biblioteca shapely. Os itens 6.11.1 e 7.5 usaram um substituto mínimo dela (casco convexo e círculo). Rode de novo no computador do projeto para confirmar com as bibliotecas reais.
+- **O LLM não é determinístico**, mesmo com temperatura 0 (91,9% de repetição entre as rodadas). As métricas da camada LLM variam um pouco a cada execução; as da camada final, quase nada.
+- **O prompt do LLM não inclui os Psets do TIPO da porta.** Por isso o LLM sozinho marca o 4.6.6 (maçaneta) como Indeterminado; o Python lê esses Psets e corrige.
+- **W01:** a mutação alterou só o contorno do ambiente. O alarme do LLM no 7.7.1 é ambíguo (ver sensibilidade).
 - **Um único modelo-base**, pequeno (3 ambientes e 31 pares positivos). As métricas valem para estes tipos de erro, não para qualquer projeto.
 - **Erros injetados por script não passam pela exportação do Revit.** Por isso o caso real C02 entra junto.
 - Na porta, a mutação altera o atributo `OverallWidth`, que é o que o item 6.11.2 lê, mas não a geometria da folha.
@@ -109,6 +127,9 @@ python benchmark/rodar_benchmark.py --llm anthropic --modelo <id-do-modelo-usado
 # 4. métricas (errata é regenerada por regra antes)
 python benchmark/gerar_errata.py
 python benchmark/calcular_metricas.py
+
+# 5. planilha consolidada (lê também benchmark/rodada_v1/)
+python benchmark/montar_planilha.py
 ```
 
 O passo 2 ou o passo 3 sobrescreve o `resultados.csv`. A rodada no computador do projeto é a de referência para a dissertação.
